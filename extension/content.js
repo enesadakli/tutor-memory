@@ -12,6 +12,7 @@
   let lastTurnSnapshot = "";
   let saving = false;
   let saveAgain = false;
+  let pendingNewChat = null;
 
   function storageGet(area, defaults) {
     return new Promise((resolve) => area.get(defaults, resolve));
@@ -23,10 +24,6 @@
 
   function sendMessage(message) {
     return new Promise((resolve) => chrome.runtime.sendMessage(message, resolve));
-  }
-
-  function cleanTitle() {
-    return document.title.replace(/\s+- Google Gemini$/, "").trim();
   }
 
   function currentSnapshot() {
@@ -79,6 +76,11 @@
     if (!route || expectedGeneration !== generation) {
       return;
     }
+    const activeKey = `active:${route.chatId}`;
+    const activeValues = await storageGet(chrome.storage.local, { [activeKey]: false });
+    if (expectedGeneration !== generation || !activeValues[activeKey]) {
+      return;
+    }
     const key = `chat:${route.chatId}`;
     const values = await storageGet(chrome.storage.local, { [key]: [] });
     if (expectedGeneration !== generation) {
@@ -100,7 +102,7 @@
       sidecar: capture.sidecar({
         gemId: route.gemId,
         chatId: route.chatId,
-        title: cleanTitle(),
+        title: capture.usefulTitle(document.title),
         url: location.href,
         turns: merged,
         now: new Date(),
@@ -135,6 +137,17 @@
     if (!allowed.has(route.gemId.toLowerCase())) {
       return;
     }
+    if (
+      pendingNewChat &&
+      pendingNewChat.gemId.toLowerCase() === route.gemId.toLowerCase() &&
+      Date.now() - pendingNewChat.at < 120000
+    ) {
+      pendingNewChat = null;
+      await storageSet(chrome.storage.local, { [`active:${route.chatId}`]: true });
+      if (expectedGeneration !== generation) {
+        return;
+      }
+    }
     const now = Date.now();
     lastMutationAt = now;
     lastTurnChangeAt = now;
@@ -147,6 +160,71 @@
     });
     schedule(expectedGeneration, SETTLE_MS);
   }
+
+  async function onSendEvent() {
+    const route = capture.parseGemRoute(location.href);
+    if (!route) {
+      return;
+    }
+    const values = await storageGet(chrome.storage.sync, { gemIds: [] });
+    const allowed = new Set(
+      (Array.isArray(values.gemIds) ? values.gemIds : []).map((id) => String(id).toLowerCase()),
+    );
+    if (!allowed.has(route.gemId.toLowerCase())) {
+      return;
+    }
+    if (route.chatId) {
+      await storageSet(chrome.storage.local, { [`active:${route.chatId}`]: true });
+    } else {
+      pendingNewChat = { gemId: route.gemId, at: Date.now() };
+    }
+  }
+
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (
+        event.key === "Enter" &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey
+      ) {
+        const target =
+          event.target && event.target.nodeType === 1
+            ? event.target
+            : event.target && event.target.parentElement;
+        if (
+          target &&
+          target.closest &&
+          target.closest('rich-textarea, [contenteditable="true"], textarea')
+        ) {
+          onSendEvent();
+        }
+      }
+    },
+    true,
+  );
+
+  document.addEventListener(
+    "click",
+    (event) => {
+      const target =
+        event.target && event.target.nodeType === 1
+            ? event.target
+            : event.target && event.target.parentElement;
+      const button = target && target.closest && target.closest("button");
+      if (button) {
+        const ariaLabel = button.getAttribute("aria-label") || "";
+        const hasSendClass =
+          button.classList && button.classList.contains("send-button");
+        if (/send|gönder/i.test(ariaLabel) || hasSendClass) {
+          onSendEvent();
+        }
+      }
+    },
+    true,
+  );
 
   setInterval(() => {
     if (location.href !== lastHref) {

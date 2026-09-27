@@ -28,6 +28,31 @@
     return match ? { gemId: match[1], chatId: match[2] } : null;
   }
 
+  function parseGemRoute(url) {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_error) {
+      return null;
+    }
+    if (parsed.protocol !== "https:" || parsed.hostname !== "gemini.google.com") {
+      return null;
+    }
+    const match = parsed.pathname.match(/^\/gem\/([0-9a-f]+)(?:\/([0-9a-f]+))?\/?$/i);
+    return match ? { gemId: match[1], chatId: match[2] || null } : null;
+  }
+
+  function usefulTitle(title) {
+    const text = String(title || "")
+      .replace(/\s*- Google Gemini$/i, "")
+      .trim();
+    const lower = text.toLowerCase();
+    if (!text || lower === "gemini" || lower === "google gemini") {
+      return "";
+    }
+    return text;
+  }
+
   function childrenOf(node) {
     return Array.from((node && node.childNodes) || []);
   }
@@ -271,6 +296,8 @@
   const api = {
     SELECTORS,
     parseGemUrl,
+    parseGemRoute,
+    usefulTitle,
     tutorToMarkdown,
     extractTurns,
     mergeTurns,

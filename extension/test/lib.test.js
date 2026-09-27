@@ -6,10 +6,12 @@ const assert = require("node:assert/strict");
 const {
   extractTurns,
   mergeTurns,
+  parseGemRoute,
   parseGemUrl,
   sidecar,
   toTranscript,
   tutorToMarkdown,
+  usefulTitle,
 } = require("../lib.js");
 
 class TextNode {
@@ -119,6 +121,48 @@ test("parseGemUrl rejects other origins, routes, and non-hex ids", () => {
   assert.equal(parseGemUrl("not a URL"), null);
 });
 
+test("parseGemRoute accepts Gem URLs with or without chat id and handles trailing slashes", () => {
+  assert.deepEqual(parseGemRoute("https://gemini.google.com/gem/aB12/09ff?hl=tr"), {
+    gemId: "aB12",
+    chatId: "09ff",
+  });
+  assert.deepEqual(parseGemRoute("https://gemini.google.com/gem/a1/b2"), {
+    gemId: "a1",
+    chatId: "b2",
+  });
+  assert.deepEqual(parseGemRoute("https://gemini.google.com/gem/a1/b2/"), {
+    gemId: "a1",
+    chatId: "b2",
+  });
+  assert.deepEqual(parseGemRoute("https://gemini.google.com/gem/aB12"), {
+    gemId: "aB12",
+    chatId: null,
+  });
+  assert.deepEqual(parseGemRoute("https://gemini.google.com/gem/aB12/"), {
+    gemId: "aB12",
+    chatId: null,
+  });
+});
+
+test("parseGemRoute rejects other origins, routes, and non-hex ids", () => {
+  assert.equal(parseGemRoute("https://example.com/gem/a1/b2"), null);
+  assert.equal(parseGemRoute("https://gemini.google.com/app/a1"), null);
+  assert.equal(parseGemRoute("https://gemini.google.com/gem/not-hex"), null);
+  assert.equal(parseGemRoute("https://gemini.google.com/gem/not-hex/b2"), null);
+  assert.equal(parseGemRoute("https://gemini.google.com/gem/a1/not-hex"), null);
+  assert.equal(parseGemRoute("not a URL"), null);
+});
+
+test("usefulTitle cleans trailing Google Gemini and ignores default titles", () => {
+  assert.equal(usefulTitle("Gemini"), "");
+  assert.equal(usefulTitle("Google Gemini"), "");
+  assert.equal(usefulTitle("Batch Norm - Google Gemini"), "Batch Norm");
+  assert.equal(usefulTitle(""), "");
+  assert.equal(usefulTitle("gemini"), "");
+  assert.equal(usefulTitle("google gemini"), "");
+  assert.equal(usefulTitle("Linear Algebra - Google Gemini"), "Linear Algebra");
+});
+
 test("mergeTurns keeps known order, updates known data, and positions new DOM turns", () => {
   const stored = [
     { id: "b", learner: "old B", tutor: "old", complete: true },
@@ -164,7 +208,7 @@ test("toTranscript includes only complete turns in manual speaker format", () =>
 
 test("sidecar has contract keys and counts only complete turns", () => {
   assert.deepEqual(
-    sidecar({
+    sidecar({Supported: true,
       gemId: "aa",
       chatId: "bb",
       title: "Ders",
