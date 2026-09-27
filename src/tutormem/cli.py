@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .automatic import install_agent, revoke, run_auto, uninstall_agent
 from .config import Config
 from .errors import PendingReviewError, ReplayError, StaleArtifactError, TutormemError
 from .extract import make_extractor
@@ -72,6 +73,22 @@ def _parser() -> argparse.ArgumentParser:
 
     sync_parser = commands.add_parser("sync")
     sync_parser.add_argument("--dry-run", action="store_true")
+
+    auto_parser = commands.add_parser("auto")
+    auto_parser.add_argument("--inbox", type=Path)
+    auto_parser.add_argument("--idle-minutes", type=int)
+    auto_parser.add_argument("--no-sync", action="store_true")
+    auto_parser.add_argument("--dry-run", action="store_true")
+
+    revoke_parser = commands.add_parser("revoke")
+    revoke_parser.add_argument("id")
+    revoke_parser.add_argument("--reason", default="")
+    revoke_parser.add_argument("--no-sync", action="store_true")
+
+    install_parser = commands.add_parser("install-agent")
+    install_parser.add_argument("--interval-minutes", type=int, default=15)
+    install_parser.add_argument("--load", action="store_true")
+    commands.add_parser("uninstall-agent")
     return parser
 
 
@@ -104,7 +121,10 @@ def _extract_one(
 ) -> ExtractResult:
     session = load_session(ws, session_id)
     name = extractor_name or config.extract.extractor
-    extractor = make_extractor(name, config, path=from_path)  # type: ignore[arg-type]
+    base = ws.base_path.read_text(encoding="utf-8") if ws.base_path.exists() else None
+    extractor = make_extractor(  # type: ignore[arg-type]
+        name, config, path=from_path, base=base
+    )
     result = extractor.extract(session, _open_items(_load_profile(ws)))
     write_json(ws.observations_path(session_id), result)
     return result
@@ -154,11 +174,12 @@ def _replay(ws: Workspace, config: Config) -> ProfileState:
     return state
 
 
-def _render(ws: Workspace) -> None:
+def _render(ws: Workspace, config: Config) -> None:
     state = _load_profile(ws, required=True)
     courses = ws.courses_path.read_text(encoding="utf-8") if ws.courses_path.exists() else None
-    write_text(ws.out_dir / "profile.md", render_profile(state))
-    write_text(ws.out_dir / "brief.md", render_brief(state, courses))
+    base = ws.base_path.read_text(encoding="utf-8") if ws.base_path.exists() else None
+    write_text(ws.out_dir / "profile.md", render_profile(state, threshold=config.threshold))
+    write_text(ws.out_dir / "brief.md", render_brief(state, courses, base_md=base))
 
 
 def _artifact_state(path: Path, cls: type[Any], session: Any) -> tuple[Any | None, bool]:
@@ -251,7 +272,7 @@ def _run(
             packet = write_packet(session, result, _load_profile(ws))
             write_text(ws.review_path(session.session_id), packet)
     state = _replay(ws, config)
-    _render(ws)
+    _render(ws, config)
     pending = [record.session_id for record in state.sessions if record.status == "pending"]
     if pending:
         print("pending: " + ", ".join(pending))
@@ -288,13 +309,28 @@ def _dispatch(args: argparse.Namespace) -> None:
     elif args.command == "replay":
         _replay(ws, config)
     elif args.command == "render":
-        _render(ws)
+        _render(ws, config)
     elif args.command == "status":
         _status(ws)
     elif args.command == "run":
         _run(ws, config, args.extractor, args.observations_dir)
     elif args.command == "sync":
         print(sync_brief(ws, config, dry_run=args.dry_run))
+    elif args.command == "auto":
+        run_auto(
+            ws,
+            config,
+            inbox=args.inbox,
+            idle_minutes=args.idle_minutes,
+            no_sync=args.no_sync,
+            dry_run=args.dry_run,
+        )
+    elif args.command == "revoke":
+        revoke(ws, config, args.id, reason=args.reason, no_sync=args.no_sync)
+    elif args.command == "install-agent":
+        install_agent(ws, interval_minutes=args.interval_minutes, load=args.load)
+    elif args.command == "uninstall-agent":
+        uninstall_agent()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -303,7 +339,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         _dispatch(args)
-    except TutormemError as exc:
+    except (OSError, TutormemError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return 0

@@ -127,10 +127,18 @@ class AgyExtractor:
 
     name = "agy"
 
-    def __init__(self, model: str, timeout_s: int, *, runner: Runner | None = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        timeout_s: int,
+        *,
+        runner: Runner | None = None,
+        base: str | None = None,
+    ) -> None:
         self.model = model
         self.timeout_s = timeout_s
         self._runner = runner or _default_runner
+        self.base = base
 
     def extract(
         self, session: Session, open_items: Sequence[Instruction | Hypothesis]
@@ -147,6 +155,7 @@ class AgyExtractor:
         prompt = Template(prompt_text).substitute(
             transcript=transcript,
             open_items=open_items_text,
+            base=self.base.strip() if self.base is not None and self.base.strip() else "(none)",
         )
         args = [
             "agy",
@@ -205,11 +214,15 @@ class AgyExtractor:
 
 
 def make_extractor(
-    name: Literal["agy", "file"], config: Config, *, path: Path | None = None
+    name: Literal["agy", "file"],
+    config: Config,
+    *,
+    path: Path | None = None,
+    base: str | None = None,
 ) -> Extractor:
     """Create an extractor from CLI and configuration values."""
     if name == "agy":
-        return AgyExtractor(config.extract.model, config.extract.timeout_s)
+        return AgyExtractor(config.extract.model, config.extract.timeout_s, base=base)
     if name == "file":
         if path is None:
             raise ExtractorError("file extractor requires --from PATH")

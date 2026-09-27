@@ -8,7 +8,7 @@ import pytest
 
 from tutormem import extract, ingest, promote, render, review, sync, verify
 from tutormem.cli import main
-from tutormem.config import Config
+from tutormem.config import AutoConfig, Config
 from tutormem.errors import SchemaError, StaleArtifactError
 from tutormem.models import (
     SCHEMA_VERSION,
@@ -217,6 +217,7 @@ def test_config_defaults_without_file(tmp_path: Path) -> None:
     assert config.threshold == 3
     assert config.stale_after == 5
     assert config.extract.model == "gemini-3.8-flash-medium"
+    assert config.auto == AutoConfig()
 
 
 def test_config_values_from_file(tmp_path: Path) -> None:
@@ -233,6 +234,13 @@ timeout_s = 12
 mode = "claude"
 [sync]
 doc_title = "Öğrenme özeti"
+[auto]
+idle_minutes = 7
+approve = "none"
+sync = false
+notify = false
+default_course = "Genel"
+changelog_copy = "/tmp/tutormem-changelog.md"
 """.strip(),
         encoding="utf-8",
     )
@@ -243,6 +251,10 @@ doc_title = "Öğrenme özeti"
     assert config.extract.timeout_s == 12
     assert config.review.mode == "claude"
     assert config.sync.doc_title == "Öğrenme özeti"
+    assert config.auto.idle_minutes == 7
+    assert config.auto.approve == "none"
+    assert config.auto.sync is False
+    assert config.auto.notify is False
 
 
 def test_config_rejects_unknown_key(tmp_path: Path) -> None:

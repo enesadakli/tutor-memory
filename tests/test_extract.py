@@ -120,6 +120,22 @@ def test_agy_extractor_shows_open_items_in_prompt(tmp_path: Path) -> None:
     assert "hyp-old:1: Use steps." in captured
 
 
+def test_agy_extractor_includes_base_brief_or_none() -> None:
+    captured: list[str] = []
+
+    def runner(args: list[str], stdin: str, timeout: float) -> subprocess.CompletedProcess[str]:
+        captured.append(stdin)
+        return subprocess.CompletedProcess(args, 0, _agy_stdout(json.dumps(_payload())), "")
+
+    AgyExtractor("m", 1, runner=runner, base="# Existing\n\nUse diagrams.").extract(_session(), ())
+    AgyExtractor("m", 1, runner=runner).extract(_session(), ())
+
+    first_prompt = json.loads(captured[0])["message"]["content"]
+    second_prompt = json.loads(captured[1])["message"]["content"]
+    assert "Already in the brief (do not propose these again):\n# Existing" in first_prompt
+    assert "Already in the brief (do not propose these again):\n(none)" in second_prompt
+
+
 def test_agy_extractor_error_result_includes_error_and_truncated_stderr() -> None:
     def runner(args: list[str], stdin: str, timeout: float) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(

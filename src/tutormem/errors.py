@@ -44,3 +44,7 @@ class ReviewerError(TutormemError):
 
 class SyncError(TutormemError):
     """Raised when document synchronization fails."""
+
+
+class AutomaticModeError(TutormemError):
+    """Raised when automatic orchestration cannot complete."""

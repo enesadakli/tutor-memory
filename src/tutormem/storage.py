@@ -53,6 +53,22 @@ class Workspace:
         return self.root / "courses.md"
 
     @property
+    def base_path(self) -> Path:
+        return self.root / "base.md"
+
+    @property
+    def changelog_path(self) -> Path:
+        return self.root / "changelog.md"
+
+    @property
+    def auto_log_path(self) -> Path:
+        return self.root / "auto.log"
+
+    @property
+    def auto_lock_path(self) -> Path:
+        return self.root / ".auto.lock"
+
+    @property
     def config_path(self) -> Path:
         return self.root / "tutormem.toml"
 

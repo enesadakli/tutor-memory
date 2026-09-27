@@ -39,6 +39,27 @@ model writes is state. The profile (`state/profile.json`) is always
 recomputed from scratch, in session order, from the approved decision files.
 There is no in-place edit of learner state anywhere in the pipeline.
 
+## Automatic mode
+
+In automatic mode, the learner only studies. The [capture extension](extension/README.md) writes
+finished Gemini chats to a local inbox, launchd runs `tutormem auto` every 15 minutes, Claude's
+review is applied automatically, and the resulting brief is replayed, rendered, and synced. Every
+profile change appears in a macOS notification and in `<workspace>/changelog.md` with an undo
+command.
+
+```bash
+# One-time setup; inspect the printed plist and launchctl command.
+tutormem install-agent --interval-minutes 15 --load
+
+# Undo a wrong instruction or hypothesis later.
+tutormem revoke <id> --reason "Not a stable learning preference"
+```
+
+This removes the human approval gate, not the deterministic gates: quotes still have to exist in
+learner turns, and inferences still need evidence from three distinct applied sessions by default.
+The trade-off is real: Claude can approve a wrong rule, and that rule can remain in the tutor brief
+until it is revoked. Set `auto.approve = "none"` to retain the old manual approval step.
+
 ## The evidence rule
 
 From `docs/spec.md` section 4.5, precisely:

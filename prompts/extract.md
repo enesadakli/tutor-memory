@@ -18,5 +18,8 @@ Every observation must have 1–3 verbatim quotes copied character for character
 Open items:
 $open_items
 
+Already in the brief (do not propose these again):
+$base
+
 Transcript:
 $transcript

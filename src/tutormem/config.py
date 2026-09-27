@@ -37,6 +37,17 @@ class SyncConfig:
     config_dir: str = "~/.config/tutor-memory"
 
 
+@dataclass(frozen=True, slots=True)
+class AutoConfig:
+    inbox: str = "~/Downloads/tutor-memory/inbox"
+    idle_minutes: int = 20
+    approve: Literal["claude", "none"] = "claude"
+    sync: bool = True
+    notify: bool = True
+    default_course: str = "General"
+    changelog_copy: str = ""
+
+
 def _section(cls: type[Any], raw: Any, name: str) -> Any:
     if not isinstance(raw, dict):
         raise SchemaError(f"config {name}: expected table")
@@ -55,6 +66,8 @@ def _section(cls: type[Any], raw: Any, name: str) -> Any:
             raise SchemaError(f"config {name}.{key}: expected int")
         elif expected is str and type(value) is not str:
             raise SchemaError(f"config {name}.{key}: expected str")
+        elif expected is bool and type(value) is not bool:
+            raise SchemaError(f"config {name}.{key}: expected bool")
     try:
         return cls(**raw)
     except (TypeError, ValueError) as exc:
@@ -67,6 +80,7 @@ class Config:
     extract: ExtractConfig = field(default_factory=ExtractConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
     sync: SyncConfig = field(default_factory=SyncConfig)
+    auto: AutoConfig = field(default_factory=AutoConfig)
 
     @property
     def threshold(self) -> int:
@@ -87,7 +101,7 @@ class Config:
             raise SchemaError(f"cannot read config: {exc}") from exc
         if not isinstance(raw, dict):
             raise SchemaError("config: expected table")
-        allowed = {"rules", "extract", "review", "sync"}
+        allowed = {"rules", "extract", "review", "sync", "auto"}
         unknown = set(raw) - allowed
         if unknown:
             raise SchemaError(f"config: unknown keys: {', '.join(sorted(unknown))}")
@@ -96,4 +110,5 @@ class Config:
             extract=_section(ExtractConfig, raw.get("extract", {}), "extract"),
             review=_section(ReviewConfig, raw.get("review", {}), "review"),
             sync=_section(SyncConfig, raw.get("sync", {}), "sync"),
+            auto=_section(AutoConfig, raw.get("auto", {}), "auto"),
         )

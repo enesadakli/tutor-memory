@@ -83,7 +83,7 @@ def test_render_brief_filters_statuses_orders_promotions_and_strips_courses() ->
         _state(instructions=instructions, hypotheses=hypotheses, sessions=sessions),
         "\n Course progress \n\n",
     )
-    assert "from 1 reviewed sessions" in brief
+    assert "from 1 reviewed session" in brief
     assert brief.index("- Earlier") < brief.index("- Tie first") < brief.index("- Tie second")
     assert "Revoked" not in brief
     assert "Open" not in brief
@@ -94,6 +94,28 @@ def test_render_brief_filters_statuses_orders_promotions_and_strips_courses() ->
 
 def test_render_brief_blank_courses_omits_section() -> None:
     assert "Courses and progress" not in render_brief(_state(), " \n\t")
+
+
+def test_render_brief_preserves_base_and_only_appends_learned_sections() -> None:
+    state = _state(
+        instructions=(_instruction("ins-1", "Go slide by slide."),),
+        hypotheses=(_hypothesis("hyp-1", "Asks for diagrams.", "promoted", 2),),
+    )
+    rendered = render_brief(
+        state, "ignored courses", base_md="\n# My tutor brief\n\nKeep it calm.\n"
+    )
+
+    assert rendered == (
+        "# My tutor brief\n\n"
+        "Keep it calm.\n\n"
+        "## Learned from sessions\n\n"
+        "### How to teach\n\n"
+        "- Go slide by slide.\n\n"
+        "### Observed patterns\n\n"
+        "- Asks for diagrams.\n"
+    )
+    assert "# Study brief" not in rendered
+    assert "Courses and progress" not in rendered
 
 
 def test_render_brief_matches_example_byte_for_byte() -> None:
@@ -131,6 +153,7 @@ def test_render_profile_has_required_tables_threshold_pending_and_escaped_pipes(
     ):
         assert heading in rendered
     assert "1/5" in rendered
+    assert "| ins-s1:1 | active | teach \\| slowly | 1 |" in rendered
     assert "pending" in rendered
     assert r"teach \| slowly" in rendered
     assert r"a \| quoted value" in rendered

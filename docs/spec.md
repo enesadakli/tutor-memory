@@ -33,6 +33,7 @@ A workspace is a directory, by default **outside** the repository:
 
 ```
 <ws>/tutormem.toml                    optional config (section 7)
+<ws>/base.md                          optional hand-written tutor brief
 <ws>/courses.md                       optional, hand-written, copied into the brief verbatim
 <ws>/sessions/<session_id>.json       canonical Session
 <ws>/runs/<session_id>/observations.json   ExtractResult
@@ -43,6 +44,8 @@ A workspace is a directory, by default **outside** the repository:
 <ws>/state/profile.json               ProfileState (derived, rewritten from scratch by replay)
 <ws>/out/profile.md                   rendered profile
 <ws>/out/brief.md                     rendered brief
+<ws>/changelog.md                     append-only automatic-mode changes and undo commands
+<ws>/auto.log                         per-session automatic-mode failures
 ```
 
 All JSON files are UTF-8, `ensure_ascii=False`, `indent=2`, keys in dataclass
@@ -170,7 +173,7 @@ session_id: str | None = None, date: str | None = None, replace: bool = False) -
 `class Extractor(Protocol): name: str; model: str | None; def extract(self, session: Session, open_items: Sequence[Instruction | Hypothesis]) -> ExtractResult`
 
 - `FileExtractor(path)`: reads a JSON file `{"observations": [...]}` whose items are Observation dicts **without** `id`; assigns ids `<session_id>:<n>`. Invalid items go to `dropped`.
-- `AgyExtractor(model, timeout_s)`: runs the Antigravity CLI headless. Prompt = `prompts/extract.md` template filled with the canonical transcript (turns labeled `[learner]`/`[tutor]` with their turn index) and the open items (id + claim). Transcript text must **not** be passed as a command-line argument (it would show in `ps`); pass it on stdin or via a temp file (mode 0600, deleted afterwards). Use `--json-schema` with the observation-list schema, `--sandbox`, `--print-timeout <timeout_s>s`. Parse the first JSON value in stdout; invalid items -> `dropped`; non-zero exit, timeout, or no JSON -> `ExtractorError` with stderr truncated to 500 chars.
+- `AgyExtractor(model, timeout_s)`: runs the Antigravity CLI headless. Prompt = `prompts/extract.md` template filled with the canonical transcript (turns labeled `[learner]`/`[tutor]` with their turn index), the open items (id + claim), and the stripped contents of `base.md` under "Already in the brief (do not propose these again)". An absent or blank base is rendered as `(none)`. Transcript text must **not** be passed as a command-line argument (it would show in `ps`); pass it on stdin or via a temp file (mode 0600, deleted afterwards). Use `--json-schema` with the observation-list schema, `--sandbox`, `--print-timeout <timeout_s>s`. Parse the first JSON value in stdout; invalid items -> `dropped`; non-zero exit, timeout, or no JSON -> `ExtractorError` with stderr truncated to 500 chars.
 - `make_extractor(name: Literal["agy", "file"], config: Config, *, path: Path | None = None) -> Extractor`.
 
 ### 4.4 review (`review.py`)
@@ -232,11 +235,18 @@ Built by tutor-memory from {A} reviewed sessions. Follow it in every session.
 - An empty list renders the single line `- None yet.`
 - The "Courses and progress" section (heading, blank line, body) is omitted entirely when `courses_md` is None or blank.
 - Sections are separated by one blank line; the file ends with exactly one `\n`.
+- "session" is singular when `{A} == 1`; the existing plural output is unchanged otherwise.
+- When `<ws>/base.md` exists and is non-blank, omit the title, generated summary, and courses
+  section. Output the stripped base, one blank line, then `## Learned from sessions`, with
+  `### How to teach` and `### Observed patterns` subsections using the same filtering and ordering
+  rules above. Empty lists use `- None yet.` and the file has one trailing newline.
 
 `render_profile(state: ProfileState) -> str`: Markdown with sections
 `# Learner profile`, `## Instructions`, `## Hypotheses`, `## Stuck points`,
 `## Sessions`; tables showing ids, status, session counts (`n/threshold`),
-first/last seen, and quotes. Format beyond these headings is free.
+first/last seen, and quotes. The instructions table shows its quote evidence count rather than
+`n/threshold`; hypotheses continue to show distinct session count as `n/threshold`. Format beyond
+these headings is free.
 
 ### 4.7 sync (`sync.py`)
 `sync(ws: Workspace, config: Config, *, dry_run: bool = False, drive=None) -> str`
@@ -263,6 +273,10 @@ Global: `--workspace PATH`. Subcommands:
 | `status` | one line per session: index, id, stage (`ingested/extracted/verified/reviewed/applied`), pending/stale flags |
 | `run [--extractor agy\|file] [--observations-dir DIR]` | for each session: extract if missing or stale (file extractor reads `DIR/<sid>.json`), verify if missing or stale, write the review packet if `decisions.json` is missing; then replay and render; prints pending sessions |
 | `sync [--dry-run]` | 4.7 |
+| `auto [--inbox DIR] [--idle-minutes N] [--no-sync] [--dry-run]` | section 8 |
+| `revoke ID [--reason TEXT] [--no-sync]` | section 8.3 |
+| `install-agent [--interval-minutes 15] [--load]` | section 8.4 |
+| `uninstall-agent` | section 8.4 |
 
 Exit codes: 0 ok, 1 `TutormemError` (message on stderr, no traceback), 2 usage.
 
@@ -271,6 +285,8 @@ Exit codes: 0 ok, 1 `TutormemError` (message on stderr, no traceback), 2 usage.
 - Real transcripts, profiles, briefs, Doc ids and credentials never enter the repository. The repo ships only synthetic data under `examples/` and `tests/fixtures/`.
 - `.gitignore` excludes `sessions/`, `runs/`, `state/`, `out/`, `*.log`, `credentials*`, `client_secret*.json`, `token.json` everywhere except under `examples/` and `tests/fixtures/`.
 - Data leaving the machine: `extract --extractor agy` sends the full transcript to Google; `review --mode claude` sends the review packet to Anthropic; `sync` uploads the brief to Google Drive. Nothing else calls the network.
+- Automatic mode invokes those same three operations without interactive confirmation when its
+  configured gates allow them.
 
 ## 7. Config (`tutormem.toml`, read with `tomllib`)
 
@@ -292,6 +308,87 @@ timeout_s = 300
 [sync]
 doc_title = "Study brief"
 config_dir = "~/.config/tutor-memory"
+
+[auto]
+inbox = "~/Downloads/tutor-memory/inbox"
+idle_minutes = 20
+approve = "claude"       # or "none"
+sync = true
+notify = true
+default_course = "General"
+changelog_copy = ""
 ```
 
 `Config.load(ws) -> Config` returns defaults when the file is missing; unknown keys -> `SchemaError`.
+
+## 8. Automatic mode
+
+### 8.1 Capture inbox and orchestration
+
+The capture extension writes `gemini-<chatId>.md` in manual-speaker format and then writes the
+matching JSON sidecar:
+
+```json
+{"source":"gemini-gem","gem_id":"...","chat_id":"...","title":"...","url":"...","turns":2,"updated_at":"..."}
+```
+
+`tutormem auto` creates `<ws>/.auto.lock` exclusively. A lock at most 60 minutes old makes the
+command print `another run in progress` and exit 0. An older lock is replaced. A lock acquired by
+the current process is always removed in `finally`.
+
+The command scans `gemini-*.md` files with sidecars. Both mtimes must be at least `idle_minutes`
+old (CLI override, else `auto.idle_minutes`); files without a learner turn are skipped. The
+session id is `gem-` plus lowercased `chat_id`, course is the non-blank sidecar title or
+`auto.default_course`, and date is the local calendar date of `updated_at`.
+
+An unseen id is ingested with manual speakers. For an existing id, identical content is skipped
+when its approved decision is complete (or its proposal exists in `approve = "none"` mode), while
+an incomplete run is retried. Changed content is ingested with replacement and keeps its index.
+Content already owned by another session id is skipped and logged.
+
+Each new, changed, or retried session is extracted with the configured extractor, verified,
+packetized, and reviewed by Claude. With `auto.approve = "claude"` the complete proposal is copied
+to `decisions.json` and immediately participates in replay. With `"none"`, processing stops after
+`decisions.proposed.json`, preserving the human approval gate.
+
+After changes, the command replays and renders once more, syncs unless `--no-sync` or
+`auto.sync = false`, appends the changelog, and notifies. `--dry-run` only prints sessions that
+would be processed and leaves no persistent changes. Extractor/reviewer failures and timeouts are
+isolated per session: they are appended to `<ws>/auto.log`, notified, do not stop other sessions,
+and remain retryable because no current complete decision marks them done. The command exits 0
+after such isolated failures and 1 after a global failure.
+
+### 8.2 Diff, changelog, and notification
+
+`profile_diff(before, after) -> list[str]` is pure and deterministic. It reports new active
+instructions, newly promoted hypotheses, new open hypotheses, increased hypothesis session count
+as `n/threshold`, dropped hypotheses, and revoked items. Every line ends with the item id in
+parentheses, for example `New instruction: Go slide by slide. (ins-gem-abc:2)`.
+
+Each change appends a `## <local ISO timestamp>` block to `<ws>/changelog.md`, followed by the
+processed session ids, diff lines, and `Undo: tutormem revoke <id>` for changed items that remain
+revocable. If `auto.changelog_copy` is non-empty, the identical block is appended there.
+
+When `auto.notify = true`, macOS runs `osascript -e` with title `tutor-memory` and text containing
+the first three diff lines plus `…` when more exist. Quotes and backslashes are escaped. Other
+platforms silently skip notifications. Per-session failure notifications contain the session and
+error. The notifier is injectable for tests.
+
+### 8.3 Revocation
+
+`tutormem revoke ID [--reason TEXT] [--no-sync]` accepts only an active instruction or an open or
+promoted hypothesis. Unknown, dropped, or already revoked ids fail before any write. It appends a
+`Revocation(target_id=ID, reviewer="human", reason=TEXT)` to the current `decisions.json` of the
+applied session with the greatest ingest index, validates replay in memory, then writes the
+decision, replays, renders, syncs unless `--no-sync`, appends a changelog block, and notifies.
+
+### 8.4 launchd agent
+
+`install-agent` writes `~/Library/LaunchAgents/com.tutormem.auto.plist` with the absolute
+`tutormem` executable (`shutil.which`, else absolute `sys.argv[0]`), arguments
+`--workspace <absolute ws> auto`, `StartInterval = interval_minutes * 60`, `RunAtLoad = true`, and
+stdout/stderr at `<ws>/auto.stdout.log` and `<ws>/auto.stderr.log`. Its environment PATH is
+`~/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin` with `~` expanded. It prints the
+plist path and `launchctl bootstrap gui/<uid> <plist>`. With `--load`, it runs `bootout` (failure
+ignored) and then `bootstrap`. `uninstall-agent` runs `bootout` and removes the plist. The command
+runner is injectable for tests.

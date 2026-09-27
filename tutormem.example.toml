@@ -25,3 +25,18 @@ timeout_s = 300
 doc_title = "Study brief"
 # Directory containing sync credentials, token, and state.
 config_dir = "~/.config/tutor-memory"
+
+[auto]
+# Directory populated by the capture extension.
+inbox = "~/Downloads/tutor-memory/inbox"
+# A chat is finished when both capture files have been idle this long.
+idle_minutes = 20
+# "claude" applies Claude's proposal automatically; "none" keeps the manual gate.
+approve = "claude"
+# Sync and notify after an automatic run changes state.
+sync = true
+notify = true
+# Used when the capture sidecar has no title.
+default_course = "General"
+# Optional second changelog path, for example inside a notes vault.
+changelog_copy = ""

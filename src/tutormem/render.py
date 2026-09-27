@@ -7,7 +7,7 @@ def _bullets(items: list[str]) -> str:
     return "\n".join(f"- {item}" for item in items) if items else "- None yet."
 
 
-def render_brief(state: ProfileState, courses_md: str | None) -> str:
+def render_brief(state: ProfileState, courses_md: str | None, *, base_md: str | None = None) -> str:
     """Render the short tutor-facing study brief."""
     applied = sum(record.status == "applied" for record in state.sessions)
     instructions = [item.claim for item in state.instructions if item.status == "active"]
@@ -22,9 +22,21 @@ def render_brief(state: ProfileState, courses_md: str | None) -> str:
         )
         if item.status == "promoted"
     ]
+    if base_md is not None and base_md.strip():
+        learned = [
+            "## Learned from sessions",
+            "### How to teach\n\n" + _bullets(instructions),
+            "### Observed patterns\n\n" + _bullets([item.claim for item in promoted]),
+        ]
+        return base_md.strip() + "\n\n" + "\n\n".join(learned) + "\n"
+
+    session_word = "session" if applied == 1 else "sessions"
+    summary = (
+        f"Built by tutor-memory from {applied} reviewed {session_word}. Follow it in every session."
+    )
     sections = [
         "# Study brief",
-        f"Built by tutor-memory from {applied} reviewed sessions. Follow it in every session.",
+        summary,
         "## How to teach\n\n" + _bullets(instructions),
         "## Observed patterns\n\n" + _bullets([item.claim for item in promoted]),
     ]
@@ -53,12 +65,11 @@ def render_profile(state: ProfileState, *, threshold: int = 3) -> str:
         "",
         "## Instructions",
         "",
-        "| id | status | claim | sessions | first seen | last seen | quotes |",
+        "| id | status | claim | evidence | first seen | last seen | quotes |",
         "| --- | --- | --- | ---: | ---: | ---: | --- |",
     ]
     if state.instructions:
         for item in state.instructions:
-            session_count = len({evidence.session_id for evidence in item.evidence})
             evidence_ordinals = [
                 ordinals[evidence.session_id]
                 for evidence in item.evidence
@@ -67,11 +78,11 @@ def render_profile(state: ProfileState, *, threshold: int = 3) -> str:
             last_seen = max(evidence_ordinals, default=item.first_seen)
             lines.append(
                 f"| {_cell(item.id)} | {_cell(item.status)} | {_cell(item.claim)} | "
-                f"{session_count}/{threshold} | {item.first_seen} | {last_seen} | "
+                f"{len(item.evidence)} | {item.first_seen} | {last_seen} | "
                 f"{_quotes(item.evidence)} |"
             )
     else:
-        lines.append(f"| - | - | None yet. | 0/{threshold} | - | - | - |")
+        lines.append("| - | - | None yet. | 0 | - | - | - |")
 
     lines.extend(
         [
