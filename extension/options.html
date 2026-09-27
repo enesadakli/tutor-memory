@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>tutor-memory capture options</title>
+    <style>
+      body { color: #202124; font: 15px/1.5 system-ui, sans-serif; margin: 2rem; max-width: 42rem; }
+      h1 { font-size: 1.4rem; }
+      label { display: block; font-weight: 600; margin-bottom: 0.4rem; }
+      textarea { box-sizing: border-box; font: 14px/1.5 ui-monospace, monospace; min-height: 10rem; padding: 0.65rem; width: 100%; }
+      button { margin-top: 0.75rem; padding: 0.45rem 0.9rem; }
+      #status { margin-left: 0.75rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Allowed Gemini Gems</h1>
+    <p>Enter one hexadecimal Gem id per line. The id is the part after <code>/gem/</code> in the chat URL. An empty list captures nothing.</p>
+    <label for="gem-ids">Gem ids</label>
+    <textarea id="gem-ids" spellcheck="false"></textarea>
+    <div>
+      <button id="save" type="button">Save</button>
+      <span id="status" role="status" aria-live="polite"></span>
+    </div>
+    <script src="options.js"></script>
+  </body>
+</html>

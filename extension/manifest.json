@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "tutor-memory capture",
+  "version": "1.0.0",
+  "description": "Capture allowed Gemini Gem chats for tutor-memory.",
+  "permissions": [
+    "storage",
+    "downloads",
+    "downloads.ui"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://gemini.google.com/*"
+      ],
+      "js": [
+        "lib.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html"
+}
