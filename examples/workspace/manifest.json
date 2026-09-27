@@ -1,0 +1,47 @@
+[
+  {
+    "session_id": "s01",
+    "course": "Intro to Databases",
+    "file": "s01.md"
+  },
+  {
+    "session_id": "s02",
+    "course": "Intro to Databases",
+    "file": "s02.md"
+  },
+  {
+    "session_id": "s03",
+    "course": "Intro to Databases",
+    "file": "s03.md"
+  },
+  {
+    "session_id": "s04",
+    "course": "Intro to Databases",
+    "file": "s04.md"
+  },
+  {
+    "session_id": "s05",
+    "course": "Deep Learning",
+    "file": "s05.md"
+  },
+  {
+    "session_id": "s06",
+    "course": "Deep Learning",
+    "file": "s06.md"
+  },
+  {
+    "session_id": "s07",
+    "course": "Deep Learning",
+    "file": "s07.md"
+  },
+  {
+    "session_id": "s08",
+    "course": "Deep Learning",
+    "file": "s08.md"
+  },
+  {
+    "session_id": "s09",
+    "course": "Deep Learning",
+    "file": "s09.md"
+  }
+]

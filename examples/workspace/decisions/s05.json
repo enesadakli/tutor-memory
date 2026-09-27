@@ -1,0 +1,16 @@
+{
+  "session_id": "s05",
+  "content_sha256": "21f4073b61791271056982b3618d9c3d36430c4b606ec1981e2e4e1947437f87",
+  "decisions": [
+    {
+      "observation_id": "s05:1",
+      "action": "accept",
+      "reviewer": "claude"
+    },
+    {
+      "observation_id": "s05:2",
+      "action": "accept",
+      "reviewer": "claude"
+    }
+  ]
+}

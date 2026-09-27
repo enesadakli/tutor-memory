@@ -1,0 +1,10 @@
+{
+  "observations": [
+    {
+      "kind": "stuck_point",
+      "claim": "Did not understand normalization.",
+      "quotes": ["normalizasyonu anlamadım"],
+      "concept": "Normalization"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "session_id": "s07",
+  "content_sha256": "e48de2ff60a4cc6965b25b7a7d9e534e9e9a90fb7db633d662968a5759ce73c0",
+  "decisions": [
+    {
+      "observation_id": "s07:1",
+      "action": "accept",
+      "reviewer": "claude",
+      "claim": "Restates a concept in own words to confirm understanding."
+    }
+  ]
+}

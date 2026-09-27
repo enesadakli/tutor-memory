@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "instructions": [
+    {
+      "id": "ins-s01:1",
+      "claim": "Go slide by slide; the learner reads the slide alongside.",
+      "status": "active",
+      "evidence": [
+        {
+          "session_id": "s01",
+          "observation_id": "s01:1",
+          "quote": "sayfa sayfa ilerleyelim"
+        },
+        {
+          "session_id": "s05",
+          "observation_id": "s05:2",
+          "quote": "yine sayfa sayfa gidelim"
+        }
+      ],
+      "first_seen": 1,
+      "revoked_at": null
+    },
+    {
+      "id": "ins-s06:1",
+      "claim": "End each topic with its current industry status.",
+      "status": "revoked",
+      "evidence": [
+        {
+          "session_id": "s06",
+          "observation_id": "s06:1",
+          "quote": "her konunun sonunda sektörde hâlâ kullanılıyor mu onu da söyle"
+        }
+      ],
+      "first_seen": 5,
+      "revoked_at": 7
+    },
+    {
+      "id": "ins-s09:1",
+      "claim": "Ask one interview question at the end of each session.",
+      "status": "active",
+      "evidence": [
+        {
+          "session_id": "s09",
+          "observation_id": "s09:1",
+          "quote": "bir mülakat sorusu da sorar mısın"
+        }
+      ],
+      "first_seen": 8,
+      "revoked_at": null
+    }
+  ],
+  "hypotheses": [
+    {
+      "id": "hyp-s01:2",
+      "claim": "Asks for extra visual support (diagrams, plots).",
+      "status": "promoted",
+      "sessions": [
+        "s01",
+        "s02",
+        "s03"
+      ],
+      "evidence": [
+        {
+          "session_id": "s01",
+          "observation_id": "s01:2",
+          "quote": "diyagramı bir kez daha detaylandırır mısın"
+        },
+        {
+          "session_id": "s02",
+          "observation_id": "s02:2",
+          "quote": "grafiği yan yana çizer misin"
+        },
+        {
+          "session_id": "s03",
+          "observation_id": "s03:1",
+          "quote": "Şu İlişkisel modeli bir şemayla gösterir misin"
+        },
+        {
+          "session_id": "s03",
+          "observation_id": "s03:1",
+          "quote": "tabloyu da “adım adım” çizer misin"
+        }
+      ],
+      "first_seen": 1,
+      "last_seen": 3,
+      "promoted_at": 3,
+      "dropped_at": null,
+      "revoked_at": null
+    },
+    {
+      "id": "hyp-s02:1",
+      "claim": "Closes a chapter with the instructor's discussion questions.",
+      "status": "dropped",
+      "sessions": [
+        "s02"
+      ],
+      "evidence": [
+        {
+          "session_id": "s02",
+          "observation_id": "s02:1",
+          "quote": "hoca derste bu soruları tahtaya yazmış"
+        }
+      ],
+      "first_seen": 2,
+      "last_seen": 2,
+      "promoted_at": null,
+      "dropped_at": 7,
+      "revoked_at": null
+    },
+    {
+      "id": "hyp-s07:1",
+      "claim": "Restates a concept in own words to confirm understanding.",
+      "status": "open",
+      "sessions": [
+        "s07"
+      ],
+      "evidence": [
+        {
+          "session_id": "s07",
+          "observation_id": "s07:1",
+          "quote": "softmax son layer'da mı kullanılıyor yani, doğru mu anladım"
+        }
+      ],
+      "first_seen": 6,
+      "last_seen": 6,
+      "promoted_at": null,
+      "dropped_at": null,
+      "revoked_at": null
+    }
+  ],
+  "stuck_points": [
+    {
+      "session_id": "s05",
+      "course": "Deep Learning",
+      "concept": "Batch Normalization",
+      "claim": "Found batch normalization complex.",
+      "quote": "batch normalization bana çok karmaşık geldi"
+    }
+  ],
+  "sessions": [
+    {
+      "session_id": "s01",
+      "index": 1,
+      "course": "Intro to Databases",
+      "date": null,
+      "content_sha256": "51e86c6e51cc5b9f394bb01aa970c850a5947f436060185322ad6360d98f34ad",
+      "status": "applied",
+      "ordinal": 1
+    },
+    {
+      "session_id": "s02",
+      "index": 2,
+      "course": "Intro to Databases",
+      "date": null,
+      "content_sha256": "af5576ed8193725256d4d8f87d07559b3a63a35c59c50d92334c305c7ca462f5",
+      "status": "applied",
+      "ordinal": 2
+    },
+    {
+      "session_id": "s03",
+      "index": 3,
+      "course": "Intro to Databases",
+      "date": null,
+      "content_sha256": "8741714b161448d3ec846b8f71edddf0309c07590e06c68cdb87df5ce4616cd7",
+      "status": "applied",
+      "ordinal": 3
+    },
+    {
+      "session_id": "s04",
+      "index": 4,
+      "course": "Intro to Databases",
+      "date": null,
+      "content_sha256": "7c70812bbfe6bbd380ea74f0ab896bc6275b198aa859b7d911334178be6d8a21",
+      "status": "pending",
+      "ordinal": null
+    },
+    {
+      "session_id": "s05",
+      "index": 5,
+      "course": "Deep Learning",
+      "date": null,
+      "content_sha256": "21f4073b61791271056982b3618d9c3d36430c4b606ec1981e2e4e1947437f87",
+      "status": "applied",
+      "ordinal": 4
+    },
+    {
+      "session_id": "s06",
+      "index": 6,
+      "course": "Deep Learning",
+      "date": null,
+      "content_sha256": "08c24172af371904c224e7e311533c3f70e80b1238338dc5cabb9f7bf60b87cd",
+      "status": "applied",
+      "ordinal": 5
+    },
+    {
+      "session_id": "s07",
+      "index": 7,
+      "course": "Deep Learning",
+      "date": null,
+      "content_sha256": "e48de2ff60a4cc6965b25b7a7d9e534e9e9a90fb7db633d662968a5759ce73c0",
+      "status": "applied",
+      "ordinal": 6
+    },
+    {
+      "session_id": "s08",
+      "index": 8,
+      "course": "Deep Learning",
+      "date": null,
+      "content_sha256": "a8912424e956bbec6afec6ceb75f6b2a7801608a8bb918f1c53101950879a643",
+      "status": "applied",
+      "ordinal": 7
+    },
+    {
+      "session_id": "s09",
+      "index": 9,
+      "course": "Deep Learning",
+      "date": null,
+      "content_sha256": "df359679ad9b8fbf5e122851ed00bc31eea799a3fec1e45a1f7c6937402bcba6",
+      "status": "applied",
+      "ordinal": 8
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "observations": [
+    {
+      "kind": "explicit_instruction",
+      "claim": "Ask one interview question at the end of each session.",
+      "quotes": ["bir mülakat sorusu da sorar mısın"]
+    }
+  ]
+}

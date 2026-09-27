@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tutor-memory"
+version = "0.1.0"
+description = "Evidence-gated learner memory for an LLM tutor"
+requires-python = ">=3.12"
+license = "MIT"
+readme = "README.md"
+dependencies = []
+
+[project.optional-dependencies]
+pdf = ["pypdf>=5"]
+gdrive = ["google-api-python-client>=2", "google-auth-oauthlib>=1"]
+
+[project.scripts]
+tutormem = "tutormem.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tutormem"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+xfail_strict = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

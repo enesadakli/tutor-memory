@@ -1,0 +1,20 @@
+{
+  "observations": [
+    {
+      "kind": "inference",
+      "claim": "Closes a chapter with the instructor's discussion questions.",
+      "quotes": ["hoca derste bu soruları tahtaya yazmış"]
+    },
+    {
+      "kind": "inference",
+      "claim": "Asks for a side-by-side plot.",
+      "quotes": ["grafiği yan yana çizer misin"],
+      "proposed_match": "hyp-s01:2"
+    },
+    {
+      "kind": "inference",
+      "claim": "Prefers video lectures.",
+      "quotes": ["videoyu çok sevdim"]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "session_id": "s08",
+  "content_sha256": "a8912424e956bbec6afec6ceb75f6b2a7801608a8bb918f1c53101950879a643",
+  "decisions": [
+    {
+      "observation_id": "s08:1",
+      "action": "reject",
+      "reviewer": "human",
+      "reason": "Recorded as a revocation of ins-s06:1."
+    }
+  ],
+  "revocations": [
+    {
+      "target_id": "ins-s06:1",
+      "reviewer": "human",
+      "reason": "The learner withdrew the rule."
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "session_id": "s06",
+  "content_sha256": "08c24172af371904c224e7e311533c3f70e80b1238338dc5cabb9f7bf60b87cd",
+  "decisions": [
+    {
+      "observation_id": "s06:1",
+      "action": "accept",
+      "reviewer": "human"
+    },
+    {
+      "observation_id": "s06:2",
+      "action": "reject",
+      "reviewer": "human",
+      "reason": "One self-deprecating remark; claim is broader than the quote."
+    }
+  ]
+}

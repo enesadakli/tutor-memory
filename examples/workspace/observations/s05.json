@@ -1,0 +1,16 @@
+{
+  "observations": [
+    {
+      "kind": "stuck_point",
+      "claim": "Found batch normalization complex.",
+      "quotes": ["batch normalization bana çok karmaşık geldi"],
+      "concept": "Batch Normalization"
+    },
+    {
+      "kind": "explicit_instruction",
+      "claim": "Go slide by slide.",
+      "quotes": ["yine sayfa sayfa gidelim"],
+      "proposed_match": "ins-s01:1"
+    }
+  ]
+}

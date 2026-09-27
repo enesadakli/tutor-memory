@@ -1,0 +1,14 @@
+{
+  "observations": [
+    {
+      "kind": "explicit_instruction",
+      "claim": "Go slide by slide; the learner reads the slide alongside.",
+      "quotes": ["sayfa sayfa ilerleyelim"]
+    },
+    {
+      "kind": "inference",
+      "claim": "Asks for extra visual support (diagrams, plots).",
+      "quotes": ["diyagramı bir kez daha detaylandırır mısın"]
+    }
+  ]
+}

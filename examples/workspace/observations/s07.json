@@ -1,0 +1,9 @@
+{
+  "observations": [
+    {
+      "kind": "inference",
+      "claim": "Always restates everything and needs constant confirmation.",
+      "quotes": ["softmax son layer'da mı kullanılıyor yani, doğru mu anladım"]
+    }
+  ]
+}
