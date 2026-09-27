@@ -261,7 +261,7 @@ Global: `--workspace PATH`. Subcommands:
 | `replay` | builds and writes `state/profile.json` |
 | `render` | writes `out/profile.md`, `out/brief.md` |
 | `status` | one line per session: index, id, stage (`ingested/extracted/verified/reviewed/applied`), pending/stale flags |
-| `run [--extractor agy\|file]` | for each session: extract if missing or stale, verify if missing or stale, write the review packet if `decisions.json` is missing; then replay and render; prints pending sessions |
+| `run [--extractor agy\|file] [--observations-dir DIR]` | for each session: extract if missing or stale (file extractor reads `DIR/<sid>.json`), verify if missing or stale, write the review packet if `decisions.json` is missing; then replay and render; prints pending sessions |
 | `sync [--dry-run]` | 4.7 |
 
 Exit codes: 0 ok, 1 `TutormemError` (message on stderr, no traceback), 2 usage.

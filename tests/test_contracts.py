@@ -273,7 +273,11 @@ def test_config_rejects_unknown_key(tmp_path: Path) -> None:
     ],
 )
 def test_public_contract_signatures(callable_: object, parameters: list[str]) -> None:
-    assert list(inspect.signature(callable_).parameters) == parameters
+    actual = list(inspect.signature(callable_).parameters.values())
+    assert [parameter.name for parameter in actual[: len(parameters)]] == parameters
+    for parameter in actual[len(parameters) :]:
+        assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        assert parameter.default is not inspect.Parameter.empty
 
 
 def test_cli_status_empty_workspace(tmp_path: Path) -> None:

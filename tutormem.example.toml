@@ -1,0 +1,27 @@
+[rules]
+# Number of distinct sessions needed to promote a hypothesis.
+threshold = 3
+# Applied sessions without evidence before an open hypothesis is dropped.
+stale_after = 5
+
+[extract]
+# Extractor backend used when the CLI flag is omitted.
+extractor = "agy"
+# Antigravity model used for observation extraction.
+model = "gemini-3.8-flash-medium"
+# Maximum extraction runtime in seconds.
+timeout_s = 300
+
+[review]
+# Review workflow used when the CLI flag is omitted.
+mode = "packet"
+# Claude model used for proposed review decisions.
+claude_model = "sonnet"
+# Maximum reviewer runtime in seconds.
+timeout_s = 300
+
+[sync]
+# Google Doc title created on the first sync.
+doc_title = "Study brief"
+# Directory containing sync credentials, token, and state.
+config_dir = "~/.config/tutor-memory"

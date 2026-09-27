@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import dataclasses
-import inspect
 import json
 import subprocess
 from collections.abc import Callable
@@ -207,15 +206,6 @@ class ClaudeReviewer:
                 for revocation in decision_file.revocations
             ),
         )
-
-
-# Keep the frozen public signature while permitting keyword-only runner injection.
-ClaudeReviewer.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
-    [
-        inspect.Parameter("model", inspect.Parameter.POSITIONAL_OR_KEYWORD),
-        inspect.Parameter("timeout_s", inspect.Parameter.POSITIONAL_OR_KEYWORD),
-    ]
-)
 
 
 def apply_decisions(result: VerifyResult, decisions: DecisionFile) -> SessionApproval:

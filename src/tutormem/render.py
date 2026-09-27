@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import inspect
-
 from .models import EvidenceRef, ProfileState
 
 
@@ -131,10 +129,3 @@ def render_profile(state: ProfileState, *, threshold: int = 3) -> str:
     else:
         lines.append("| - | - | None yet. | - | - | - |")
     return "\n".join(lines) + "\n"
-
-
-# The frozen v1 introspection contract exposes only ``state``; ``threshold`` is a
-# backward-compatible keyword-only rendering option required by the lane contract.
-render_profile.__signature__ = inspect.Signature(
-    parameters=[inspect.Parameter("state", inspect.Parameter.POSITIONAL_OR_KEYWORD)]
-)

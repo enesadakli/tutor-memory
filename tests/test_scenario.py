@@ -6,8 +6,6 @@ import re
 import shutil
 from pathlib import Path
 
-import pytest
-
 from tutormem.cli import main
 
 FIXTURE = Path(__file__).parents[1] / "examples" / "workspace"
@@ -68,7 +66,6 @@ def _run_pipeline(workspace: Path) -> None:
     assert main(["--workspace", str(workspace), "render"]) == 0
 
 
-@pytest.mark.xfail(raises=NotImplementedError, strict=True, reason="modules not implemented yet")
 def test_full_pipeline(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     _run_pipeline(workspace)
@@ -87,7 +84,6 @@ def test_full_pipeline(tmp_path: Path) -> None:
     assert [item["exact"] for item in s03["verified"][0]["quotes"]] == [True, False]
 
 
-@pytest.mark.xfail(raises=NotImplementedError, strict=True, reason="modules not implemented yet")
 def test_duplicate_ingest_rejected(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     item = _manifest(workspace)[0]
@@ -106,7 +102,6 @@ def test_duplicate_ingest_rejected(tmp_path: Path) -> None:
     assert len(list((workspace / "sessions").glob("*.json"))) == 1
 
 
-@pytest.mark.xfail(raises=NotImplementedError, strict=True, reason="modules not implemented yet")
 def test_replace_invalidates_review(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     _run_pipeline(workspace)

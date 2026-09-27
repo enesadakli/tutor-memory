@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import json
 import subprocess
 from collections.abc import Callable, Sequence
@@ -203,15 +202,6 @@ class AgyExtractor:
                 f"agy extractor response contains no JSON object{_stderr_suffix(completed)}"
             ) from exc
         return _parse_observations(payload, session, extractor=self.name, model=self.model)
-
-
-# Keep the frozen public signature while permitting keyword-only runner injection.
-AgyExtractor.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
-    [
-        inspect.Parameter("model", inspect.Parameter.POSITIONAL_OR_KEYWORD),
-        inspect.Parameter("timeout_s", inspect.Parameter.POSITIONAL_OR_KEYWORD),
-    ]
-)
 
 
 def make_extractor(

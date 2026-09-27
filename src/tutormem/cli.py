@@ -68,6 +68,7 @@ def _parser() -> argparse.ArgumentParser:
 
     run_parser = commands.add_parser("run")
     run_parser.add_argument("--extractor", choices=("agy", "file"))
+    run_parser.add_argument("--observations-dir", type=Path)
 
     sync_parser = commands.add_parser("sync")
     sync_parser.add_argument("--dry-run", action="store_true")
@@ -210,7 +211,13 @@ def _status(ws: Workspace) -> None:
         print(f"{session.index:>3}  {session.session_id}  {stage}{flags}")
 
 
-def _run(ws: Workspace, config: Config, extractor_name: str | None) -> None:
+def _run(
+    ws: Workspace,
+    config: Config,
+    extractor_name: str | None,
+    observations_dir: Path | None,
+) -> None:
+    effective_extractor = extractor_name or config.extract.extractor
     for session in list_sessions(ws):
         try:
             extracted = load_artifact(
@@ -219,7 +226,16 @@ def _run(ws: Workspace, config: Config, extractor_name: str | None) -> None:
         except StaleArtifactError:
             extracted = None
         if extracted is None:
-            extracted = _extract_one(ws, config, session.session_id, extractor_name, None)
+            from_path = None
+            if effective_extractor == "file" and observations_dir is not None:
+                from_path = observations_dir / f"{session.session_id}.json"
+            extracted = _extract_one(
+                ws,
+                config,
+                session.session_id,
+                effective_extractor,
+                from_path,
+            )
         try:
             result = load_artifact(ws.verify_path(session.session_id), VerifyResult, session)
         except StaleArtifactError:
@@ -267,7 +283,8 @@ def _dispatch(args: argparse.Namespace) -> None:
         )
         if decisions is None:
             raise PendingReviewError(f"proposed decisions not found for session: {args.session_id}")
-        write_json(ws.decisions_path(args.session_id), decisions)
+        proposed = ws.proposed_decisions_path(args.session_id).read_text(encoding="utf-8")
+        write_text(ws.decisions_path(args.session_id), proposed)
     elif args.command == "replay":
         _replay(ws, config)
     elif args.command == "render":
@@ -275,7 +292,7 @@ def _dispatch(args: argparse.Namespace) -> None:
     elif args.command == "status":
         _status(ws)
     elif args.command == "run":
-        _run(ws, config, args.extractor)
+        _run(ws, config, args.extractor, args.observations_dir)
     elif args.command == "sync":
         print(sync_brief(ws, config, dry_run=args.dry_run))
 
