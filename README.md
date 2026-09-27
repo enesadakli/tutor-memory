@@ -1,5 +1,217 @@
 # tutor-memory
 
-Evidence-gated learner memory for an LLM tutor: turns tutoring chat exports into a short, quote-verified brief.
+Evidence-gated learner memory for an LLM tutor.
 
-See docs/spec.md.
+## The problem
+
+A chat-based tutor (a Gemini Gem, a custom GPT, anything stateless between
+chats) forgets how a given learner learns as soon as the chat ends. The usual
+fix is to ask the model to summarize the conversation and carry that summary
+forward. That produces confident, unverifiable claims: the model can assert
+"the learner prefers visual explanations" with no way to check it against
+what the learner actually said. tutor-memory keeps a learner profile instead,
+where every claim traces back to a verbatim quote from the learner, and a
+claim is only added to the profile a deterministic rule allows it to be
+added. Models propose; a fixed rule decides.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[ingest] --> B[extract\nGemini Flash]
+    B --> C[verify\ndeterministic]
+    C --> D[review\nClaude or human]
+    D --> E[replay\ndeterministic]
+    E --> F[render]
+    F --> G[sync\nGoogle Doc the tutor reads]
+```
+
+Who does what:
+
+| Actor | Role |
+|---|---|
+| Gemini Flash | Cheap, high-volume extraction: read one session transcript, propose observations with quotes. |
+| Claude (or a human) | Judgment: is a claim broader than its quotes, is the observation kind right, which existing instruction or hypothesis it matches. |
+| Code | The two gates: every quote must exist in a learner turn (`verify`), and the evidence rule decides what enters the profile (`replay`). |
+
+The core rule: models only propose observations and decisions. Nothing a
+model writes is state. The profile (`state/profile.json`) is always
+recomputed from scratch, in session order, from the approved decision files.
+There is no in-place edit of learner state anywhere in the pipeline.
+
+## The evidence rule
+
+From `docs/spec.md` section 4.5, precisely:
+
+- **Explicit instructions** (the learner directly asked to be taught a
+  certain way) go straight into the brief as active instructions, on
+  acceptance.
+- **Inferences** become open hypotheses. A hypothesis is promoted once it has
+  evidence from 3 distinct *applied* sessions (default `threshold`,
+  configurable). Promoted hypotheses stay in the brief until revoked.
+- An open hypothesis not seen again for 5 applied sessions (default
+  `stale_after`) is dropped.
+- **Pending sessions** (not yet reviewed) do not count toward promotion or
+  staleness at all. They have no effect on the profile until a decision file
+  exists for them.
+
+Quote verification is separate and just as strict: quotes are only searched
+in learner turns, matching is case-sensitive (so Turkish `İ`/`ı` are not
+folded into each other), Markdown characters (`*`, `_`) are significant. A
+quote that doesn't match literally is retried against a normalized copy of
+the text (typographic quotes and whitespace runs collapsed), and the match is
+mapped back to indices in the original, unmodified turn text. A quote that
+only exists in a tutor turn is rejected, never silently accepted.
+
+## Quickstart, no model calls
+
+This runs the whole pipeline against the synthetic example workspace using
+the `file` extractor and pre-written decisions, so nothing leaves your
+machine and no API key is needed.
+
+```sh
+uv sync --group dev
+
+export TUTORMEM_WORKSPACE="$(mktemp -d)"
+
+# Ingest the nine example sessions, course per examples/workspace/manifest.json
+while IFS=$'\t' read -r sid course file; do
+  uv run tutormem ingest "examples/workspace/inputs/$file" \
+    --course "$course" --speakers manual --session-id "$sid"
+done < <(uv run python3 -c "
+import json
+for e in json.load(open('examples/workspace/manifest.json')):
+    print(f\"{e['session_id']}\t{e['course']}\t{e['file']}\")
+")
+
+# Drop in the reviewer's decisions the example ships (one session, s04, is
+# left without a decision file on purpose, to show a pending session)
+for f in examples/workspace/decisions/*.json; do
+  sid="$(basename "$f" .json)"
+  mkdir -p "$TUTORMEM_WORKSPACE/runs/$sid"
+  cp "$f" "$TUTORMEM_WORKSPACE/runs/$sid/decisions.json"
+done
+
+# Hand-written course status, copied verbatim into the brief
+cp examples/workspace/courses.md "$TUTORMEM_WORKSPACE/courses.md"
+
+# Extract (from the pre-written observation files), verify, replay, render
+uv run tutormem run --extractor file \
+  --observations-dir examples/workspace/observations
+
+cat "$TUTORMEM_WORKSPACE/out/brief.md"
+```
+
+The printed brief matches `examples/workspace/expected/brief.md`: 8 reviewed
+sessions (the ninth, `s04`, has no decision file and stays pending), two
+active instructions, one promoted hypothesis, and the course status copied
+from `courses.md`.
+
+## Using it for real
+
+Extraction uses [`agy`](https://antigravity.google/), the Antigravity CLI, in
+headless mode against Gemini Flash. It runs under your logged-in Google
+account; no API key is stored or required.
+
+```sh
+tutormem ingest export.md --course "Deep Learning" --speakers gemini
+tutormem extract <session-id>          # --extractor agy by default
+tutormem verify <session-id>
+tutormem review <session-id>           # writes runs/<session-id>/review.md
+```
+
+Review has two modes:
+
+- **packet** (default): `review.md` is a plain-Markdown packet listing every
+  verified observation, its quotes in context, the rejected observations,
+  and the currently open/active items. A human, or Claude Code reading the
+  file directly, writes the decisions by hand into
+  `runs/<session-id>/decisions.json`.
+- **claude**: `tutormem review <session-id> --mode claude` runs `claude -p`
+  on the packet with all built-in tools disabled and writes
+  `runs/<session-id>/decisions.proposed.json`. Nothing is applied yet; run
+  `tutormem approve <session-id>` to copy the proposal into
+  `decisions.json` once you've looked at it.
+
+Then:
+
+```sh
+tutormem replay   # recompute state/profile.json from all approved sessions
+tutormem render   # write out/profile.md and out/brief.md
+tutormem sync     # push out/brief.md to a Google Doc (extra: gdrive)
+```
+
+`tutormem run` does extract + verify + review-packet + replay + render for
+every session that needs it in one call, and prints which sessions are still
+pending.
+
+Configuration is optional; see `tutormem.example.toml` for the available
+keys (extractor, review mode, promotion threshold, staleness window, sync
+target) and copy it to `<workspace>/tutormem.toml`.
+
+## What leaves your machine
+
+| Command | Sends | To |
+|---|---|---|
+| `extract --extractor agy` | the full session transcript | Google (via `agy`) |
+| `review --mode claude` | the review packet (quotes, claims, open items) | Anthropic (via `claude -p`) |
+| `sync` | the rendered brief | Google Drive |
+| everything else | nothing | — |
+
+Workspaces live outside the repository by default, at
+`~/.local/share/tutor-memory/default` (override with `--workspace` or
+`TUTORMEM_WORKSPACE`). Real transcripts, profiles, briefs, and credentials
+never enter the repo; only synthetic data under `examples/` and
+`tests/fixtures/` is committed.
+
+## Where this came from
+
+This pipeline formalizes a manual loop run with a Gemini Gem tutor and Claude
+Code, starting September 2026. Four study sessions were processed by hand
+before any of this was code. In the first manual extraction, 6 of 6 proposed
+quotes were found verbatim in the transcript; in a later one, 7 of 7. These
+are small numbers from one person's use, not an evaluation.
+
+Two things observed in that loop shaped the design directly. First, the
+extractor once widened a claim past its evidence: the quote covered one
+diagram, and the claim it produced added a second, unrelated concept the
+learner never asked about. That's why a review step exists at all, and why
+the rule "a claim may never be broader than its quotes" is enforced at
+review, not left to the extractor's judgment. Second, a teaching instruction
+the learner gave inside one chat was gone by the next chat — the tutor had no
+way to know about it. That's why continuity lives in a rendered brief the
+tutor reads at the start of a session, not in chat history the tutor may or
+may not retain.
+
+## Limitations
+
+- One export file is one session; there's no support for splitting or
+  merging sessions.
+- Gemini export parsing depends on the literal markers `User prompt:` and
+  `Response:` in the exported text. A different export format needs the
+  `manual` speaker mode (`### learner` / `### tutor` headings) instead.
+- Matching a new observation to an existing hypothesis is a review-time
+  judgment call (human or Claude), not something the pipeline infers on its
+  own.
+- The tool updates the Google Doc; it has no way to confirm the tutor
+  actually re-reads it before the next session.
+- Single-user CLI over a local workspace directory. No locking, no
+  concurrent-writer protection.
+
+## Development
+
+```sh
+uv sync --group dev
+uv run pytest
+uv run ruff check
+uv run ruff format --check
+```
+
+CI (`.github/workflows/ci.yml`) runs exactly these lint and test steps. It
+never calls a model or touches the network.
+
+See `docs/spec.md` for the full contract this code is built against.
+
+## License
+
+MIT. See `LICENSE`.
