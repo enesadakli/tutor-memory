@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -24,6 +25,15 @@ from tutormem.models import (
     turns_sha256,
 )
 from tutormem.review import ClaudeReviewer, apply_decisions, skeleton, write_packet
+
+
+def test_review_prompt_distinguishes_standing_instructions_from_one_off_requests() -> None:
+    prompt = (Path(__file__).parents[1] / "prompts" / "review.md").read_text(encoding="utf-8")
+
+    assert "standing preference" in prompt
+    assert "one-off request" in prompt
+    assert "slayttaki terimleri Türkçeleştirme" in prompt
+    assert "bunu da detaylı anlat" in prompt
 
 
 def _session(long: bool = False) -> Session:

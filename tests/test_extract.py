@@ -166,3 +166,12 @@ def test_agy_extractor_rejects_nonzero_and_invalid_response() -> None:
 def test_make_extractor_requires_file_path() -> None:
     with pytest.raises(ExtractorError, match="--from"):
         make_extractor("file", Config())
+
+
+def test_extract_prompt_distinguishes_standing_instructions_from_one_off_requests() -> None:
+    prompt = (Path(__file__).parents[1] / "prompts" / "extract.md").read_text(encoding="utf-8")
+
+    assert "standing preference" in prompt
+    assert "one-off request" in prompt
+    assert "slayttaki terimleri Türkçeleştirme" in prompt
+    assert "bunu da detaylı anlat" in prompt

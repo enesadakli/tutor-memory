@@ -26,7 +26,7 @@ Review every verified observation in the packet and return only a DecisionFile J
 }
 ```
 
-Reject an observation when its claim is broader than its quotes or its kind is wrong, unless you correct it with a narrower `claim` or correct `kind` override. Map to an existing id only when it is clearly the same behaviour. Return one decision for every verified observation. Never invent observations. Do not use tools.
+Reject an observation when its claim is broader than its quotes or its kind is wrong, unless you correct it with a narrower `claim` or correct `kind` override. Reject an `explicit_instruction` that is a one-off request about the current topic, or re-classify it with `kind: "inference"` when the pattern could recur. A standing preference applies to how the tutor should teach in future sessions: "slayttaki terimleri Türkçeleştirme" is standing, while "bunu da detaylı anlat" is a one-off request. Map to an existing id only when it is clearly the same behaviour. Return one decision for every verified observation. Never invent observations. Do not use tools.
 
 Packet:
 $packet

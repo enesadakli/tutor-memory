@@ -4,7 +4,12 @@ Return only JSON matching the supplied schema. Do not use tools.
 
 Use exactly these observation kinds:
 
-- `explicit_instruction`: the learner explicitly asks the tutor to teach in a certain way.
+- `explicit_instruction`: a standing preference about how to teach in future sessions, such as
+  "always", "from now on", or "whenever", or a rule about pacing, format, language, or
+  terminology. For example, "slayttaki terimleri Türkçeleştirme" is a standing instruction.
+  A request that concerns only the current topic or next step is a one-off request, not an
+  explicit instruction: for example, "bunu da detaylı anlat", "let's move on", or "draw that
+  graph". A one-off request may support an `inference` if the pattern recurs; otherwise omit it.
 - `inference`: a learning pattern suggested by the transcript.
 - `stuck_point`: a concept the learner struggled with; set `concept` to that concept.
 

@@ -184,8 +184,10 @@ chat history.
 A first live run of this code on one real 20-turn session: Gemini Flash proposed
 4 observations and all 4 quotes verified as exact matches in learner turns. One
 of them tagged a one-off request ("explain this in detail too") as a standing
-instruction, which is the kind of call the review step exists to reject. One run
-is an anecdote, not a benchmark.
+instruction, and the automated Claude review accepted it as well; it was caught
+at the human `approve` step. Both prompts now spell out the difference between a
+standing instruction and a one-off request, but this is why model review proposes
+and a person approves. One run is an anecdote, not a benchmark.
 
 ## Limitations
 
