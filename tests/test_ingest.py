@@ -84,6 +84,39 @@ def test_gemini_prompt_without_response_is_learner_only(tmp_path: Path) -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("learner_text", "expected"),
+    [
+        (
+            "bunun üstünde dura dura* *gidelim. atlamayalım bir yeri",
+            "bunun üstünde dura dura gidelim. atlamayalım bir yeri",
+        ),
+        (
+            "sanırım çok önemli. covariate* \n *shift gerçek bir sorun",
+            "sanırım çok önemli. covariate shift gerçek bir sorun",
+        ),
+    ],
+)
+def test_gemini_cleans_learner_italic_line_break_artifacts(
+    tmp_path: Path, learner_text: str, expected: str
+) -> None:
+    source = _write(
+        tmp_path / "gemini.txt",
+        f"User prompt: {learner_text} Response: **bold** and *italic*",
+    )
+    session = ingest(source, Workspace(tmp_path / "workspace"), course="DL")
+    assert [(turn.speaker, turn.text) for turn in session.turns] == [
+        ("learner", expected),
+        ("tutor", "**bold** and *italic*"),
+    ]
+
+
+def test_gemini_keeps_legitimate_single_asterisk_in_learner_turn(tmp_path: Path) -> None:
+    source = _write(tmp_path / "gemini.txt", "User prompt: a*b Response: çarpım")
+    session = ingest(source, Workspace(tmp_path / "workspace"), course="Math")
+    assert session.turns[0].text == "a*b"
+
+
 def test_gemini_without_marker_is_parse_error(tmp_path: Path) -> None:
     source = _write(tmp_path / "gemini.txt", "Response: no prompt")
     with pytest.raises(ParseError):

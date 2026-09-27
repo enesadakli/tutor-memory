@@ -11,19 +11,19 @@ forward. That produces confident, unverifiable claims: the model can assert
 "the learner prefers visual explanations" with no way to check it against
 what the learner actually said. tutor-memory keeps a learner profile instead,
 where every claim traces back to a verbatim quote from the learner, and a
-claim is only added to the profile a deterministic rule allows it to be
-added. Models propose; a fixed rule decides.
+claim enters the profile only when a deterministic rule allows it. Models
+propose; a fixed rule decides.
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    A[ingest] --> B[extract\nGemini Flash]
-    B --> C[verify\ndeterministic]
-    C --> D[review\nClaude or human]
-    D --> E[replay\ndeterministic]
+    A[ingest] --> B[extract<br/>Gemini Flash]
+    B --> C[verify<br/>deterministic]
+    C --> D[review<br/>Claude or human]
+    D --> E[replay<br/>deterministic]
     E --> F[render]
-    F --> G[sync\nGoogle Doc the tutor reads]
+    F --> G[sync<br/>Google Doc the tutor reads]
 ```
 
 Who does what:
@@ -69,7 +69,7 @@ This runs the whole pipeline against the synthetic example workspace using
 the `file` extractor and pre-written decisions, so nothing leaves your
 machine and no API key is needed.
 
-```sh
+```bash
 uv sync --group dev
 
 export TUTORMEM_WORKSPACE="$(mktemp -d)"
@@ -109,11 +109,11 @@ from `courses.md`.
 
 ## Using it for real
 
-Extraction uses [`agy`](https://antigravity.google/), the Antigravity CLI, in
+Extraction uses `agy`, the Antigravity CLI, in
 headless mode against Gemini Flash. It runs under your logged-in Google
 account; no API key is stored or required.
 
-```sh
+```bash
 tutormem ingest export.md --course "Deep Learning" --speakers gemini
 tutormem extract <session-id>          # --extractor agy by default
 tutormem verify <session-id>
@@ -135,7 +135,7 @@ Review has two modes:
 
 Then:
 
-```sh
+```bash
 tutormem replay   # recompute state/profile.json from all approved sessions
 tutormem render   # write out/profile.md and out/brief.md
 tutormem sync     # push out/brief.md to a Google Doc (extra: gdrive)
@@ -172,16 +172,20 @@ before any of this was code. In the first manual extraction, 6 of 6 proposed
 quotes were found verbatim in the transcript; in a later one, 7 of 7. These
 are small numbers from one person's use, not an evaluation.
 
-Two things observed in that loop shaped the design directly. First, the
-extractor once widened a claim past its evidence: the quote covered one
-diagram, and the claim it produced added a second, unrelated concept the
-learner never asked about. That's why a review step exists at all, and why
-the rule "a claim may never be broader than its quotes" is enforced at
-review, not left to the extractor's judgment. Second, a teaching instruction
-the learner gave inside one chat was gone by the next chat — the tutor had no
-way to know about it. That's why continuity lives in a rendered brief the
-tutor reads at the start of a session, not in chat history the tutor may or
-may not retain.
+Two things observed in that loop shaped the design. First, the extractor once
+widened a claim past its evidence: the quote covered one diagram, and the claim
+added a second concept the quote did not cover. That is why a review step exists
+and why a claim may never be broader than its quotes. Second, the tutor was
+following a teaching rule the learner had given inside one chat; the rule existed
+only in that chat and would not have reached the next one. That is why continuity
+lives in a rendered brief the tutor reads at the start of every session, not in
+chat history.
+
+A first live run of this code on one real 20-turn session: Gemini Flash proposed
+4 observations and all 4 quotes verified as exact matches in learner turns. One
+of them tagged a one-off request ("explain this in detail too") as a standing
+instruction, which is the kind of call the review step exists to reject. One run
+is an anecdote, not a benchmark.
 
 ## Limitations
 
@@ -190,6 +194,9 @@ may not retain.
 - Gemini export parsing depends on the literal markers `User prompt:` and
   `Response:` in the exported text. A different export format needs the
   `manual` speaker mode (`### learner` / `### tutor` headings) instead.
+- Gemini export parsing has been exercised on a small number of real exports;
+  PDF text extraction artifacts beyond the italic line-break case may need new
+  cleanup rules.
 - Matching a new observation to an existing hypothesis is a review-time
   judgment call (human or Claude), not something the pipeline infers on its
   own.
@@ -200,7 +207,7 @@ may not retain.
 
 ## Development
 
-```sh
+```bash
 uv sync --group dev
 uv run pytest
 uv run ruff check

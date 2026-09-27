@@ -15,6 +15,7 @@ _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _SESSION_ID_RE = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
 _USER_MARKER_RE = re.compile(r"\*?User prompt:\s*")
 _RESPONSE_MARKER_RE = re.compile(r"\s*\*?\s*Response:\s*")
+_ITALIC_LINE_BREAK_RE = re.compile(r"\*[ \t]*\n?[ \t]*\*")
 _MANUAL_HEADING_RE = re.compile(r"^### (learner|tutor)$", re.MULTILINE)
 
 
@@ -29,6 +30,11 @@ def slugify(stem: str) -> str:
 
 def _clean_turn(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text.strip())
+
+
+def _clean_gemini_learner(text: str) -> str:
+    text = _ITALIC_LINE_BREAK_RE.sub(" ", text)
+    return _clean_turn(re.sub(r" +", " ", text))
 
 
 def _parse_manual(text: str) -> tuple[Turn, ...]:
@@ -64,10 +70,10 @@ def _parse_gemini(text: str) -> tuple[Turn, ...]:
         if response is None:
             if marker.group().startswith("*"):
                 segment = re.sub(r"\*\s*\Z", "", segment)
-            learner_text = _clean_turn(segment)
+            learner_text = _clean_gemini_learner(segment)
             tutor_text = ""
         else:
-            learner_text = _clean_turn(segment[: response.start()])
+            learner_text = _clean_gemini_learner(segment[: response.start()])
             tutor_text = _clean_turn(segment[response.end() :])
         if learner_text:
             turns.append(Turn("learner", learner_text))
