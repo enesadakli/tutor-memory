@@ -100,6 +100,7 @@ def test_write_packet_lists_verified_rejected_matches_and_highlights_context() -
     assert "a" * 200 + "**alıntı**" + "b" * 200 in packet
     assert "…" in packet
     assert "claim" in packet.lower() and "broader" in packet.lower()
+    assert "one-off request" in packet
 
 
 def test_skeleton_is_empty_and_current() -> None:

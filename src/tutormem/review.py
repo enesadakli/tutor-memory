@@ -23,7 +23,9 @@ _REVIEWER_RULES = (
     "Reject an observation when its claim is broader than its quotes or its kind is wrong, "
     "unless you correct it with a narrower claim or kind override. Map to an existing id only "
     "when it is clearly the same behaviour. Return one decision for every verified observation. "
-    "Never invent observations."
+    "Never invent observations. Reject an explicit_instruction that is a one-off request about "
+    "the current topic, or re-classify it as an inference when the pattern could recur; "
+    '"slayttaki terimleri Türkçeleştirme" is standing, while "bunu da detaylı anlat" is one-off.'
 )
 
 
