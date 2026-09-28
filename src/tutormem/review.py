@@ -3,9 +3,10 @@ from __future__ import annotations
 import dataclasses
 import json
 import subprocess
-from collections.abc import Callable
 from pathlib import Path
 from string import Template
+from tempfile import TemporaryDirectory
+from typing import Protocol
 
 from .errors import PendingReviewError, ReviewerError, SchemaError, StaleArtifactError
 from .models import (
@@ -17,7 +18,18 @@ from .models import (
     VerifyResult,
 )
 
-Runner = Callable[[list[str], str, float], subprocess.CompletedProcess[str]]
+REVIEWER_SYSTEM_PROMPT = (
+    "You review learner-profile observations. Follow the instructions in the user message "
+    "exactly and answer only with the requested JSON."
+)
+
+
+class Runner(Protocol):
+    def __call__(
+        self, args: list[str], stdin: str, timeout: float, *, cwd: Path
+    ) -> subprocess.CompletedProcess[str]: ...
+
+
 _PROMPTS = Path(__file__).resolve().parents[2] / "prompts"
 _REVIEWER_RULES = (
     "Reject an observation when its claim is broader than its quotes or its kind is wrong, "
@@ -30,7 +42,7 @@ _REVIEWER_RULES = (
 
 
 def _default_runner(
-    args: list[str], stdin: str, timeout: float
+    args: list[str], stdin: str, timeout: float, *, cwd: Path
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         args,
@@ -39,6 +51,7 @@ def _default_runner(
         capture_output=True,
         timeout=timeout,
         check=False,
+        cwd=cwd,
     )
 
 
@@ -163,9 +176,21 @@ class ClaudeReviewer:
             self.model,
             "--tools",
             "",
+            "--no-session-persistence",
+            "--disable-slash-commands",
+            "--strict-mcp-config",
+            "--mcp-config",
+            '{"mcpServers":{}}',
+            "--setting-sources",
+            "",
+            "--system-prompt",
+            REVIEWER_SYSTEM_PROMPT,
         ]
         try:
-            completed = self._runner(args, prompt, float(self.timeout_s))
+            with TemporaryDirectory() as temporary_directory:
+                completed = self._runner(
+                    args, prompt, float(self.timeout_s), cwd=Path(temporary_directory)
+                )
         except subprocess.TimeoutExpired as exc:
             raise ReviewerError(f"claude reviewer timed out after {self.timeout_s}s") from exc
         if completed.returncode != 0:

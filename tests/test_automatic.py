@@ -18,7 +18,7 @@ from tutormem.automatic import (
     uninstall_agent,
 )
 from tutormem.config import AutoConfig, Config
-from tutormem.errors import AutomaticModeError, ExtractorError
+from tutormem.errors import AutomaticModeError, ExtractorError, ReviewerError
 from tutormem.models import (
     Decision,
     DecisionFile,
@@ -75,6 +75,17 @@ class FakeReviewer:
             result.content_sha256,
             tuple(Decision(item.observation.id, "accept", "claude") for item in result.verified),
         )
+
+
+class FailingReviewer(FakeReviewer):
+    def __init__(self, error: str) -> None:
+        super().__init__()
+        self.error = error
+
+    def propose(self, packet, result):  # type: ignore[no-untyped-def]
+        del packet
+        self.calls.append(result.session_id)
+        raise ReviewerError(self.error)
 
 
 def _config(**overrides: object) -> Config:
@@ -219,6 +230,75 @@ def test_auto_failure_isolated_and_retried(tmp_path: Path) -> None:
     assert retry.processed == ("gem-bad",)
 
 
+def test_auto_reuses_extraction_after_reviewer_failure(tmp_path: Path) -> None:
+    ws = Workspace(tmp_path / "ws")
+    inbox = tmp_path / "inbox"
+    _capture(inbox, "review-retry")
+    extractor = FakeExtractor()
+
+    first = _run(ws, inbox, extractor=extractor, reviewer=FailingReviewer("review failed"))
+    calls_after_first = len(extractor.calls)
+    reviewer = FakeReviewer()
+    second = _run(ws, inbox, extractor=extractor, reviewer=reviewer)
+
+    assert first.failed == ("gem-review-retry",)
+    assert calls_after_first == 1
+    assert len(extractor.calls) == calls_after_first
+    assert second.processed == ("gem-review-retry",)
+    assert reviewer.calls == ["gem-review-retry"]
+
+
+def test_auto_failure_notifications_are_deduplicated_and_cleared(tmp_path: Path) -> None:
+    ws = Workspace(tmp_path / "ws")
+    inbox = tmp_path / "inbox"
+    _capture(inbox, "dedupe")
+    extractor = FakeExtractor()
+    messages: list[str] = []
+    config = _config(notify=True)
+
+    _run(
+        ws,
+        inbox,
+        config=config,
+        extractor=extractor,
+        reviewer=FailingReviewer("same error"),
+        notifier=messages.append,
+    )
+    _run(
+        ws,
+        inbox,
+        config=config,
+        extractor=extractor,
+        reviewer=FailingReviewer("same error"),
+        notifier=messages.append,
+    )
+    _run(
+        ws,
+        inbox,
+        config=config,
+        extractor=extractor,
+        reviewer=FailingReviewer("different error"),
+        notifier=messages.append,
+    )
+
+    assert messages == [
+        "Automatic processing failed: gem-dedupe: same error",
+        "Automatic processing failed: gem-dedupe: different error",
+    ]
+    assert read_json(ws.auto_notified_path) == {"gem-dedupe": "different error"}
+    assert ws.auto_log_path.read_text(encoding="utf-8").count("gem-dedupe") == 3
+
+    _run(
+        ws,
+        inbox,
+        config=config,
+        extractor=extractor,
+        reviewer=FakeReviewer(),
+        notifier=messages.append,
+    )
+    assert read_json(ws.auto_notified_path) == {}
+
+
 def test_auto_approve_none_stops_at_proposal_and_does_not_repeat(tmp_path: Path) -> None:
     ws = Workspace(tmp_path / "ws")
     inbox = tmp_path / "inbox"
@@ -351,6 +431,8 @@ def test_install_and_uninstall_agent_plist_and_commands(tmp_path: Path) -> None:
     assert payload["RunAtLoad"] is True
     assert payload["StandardOutPath"].endswith("auto.stdout.log")
     assert payload["EnvironmentVariables"]["PATH"].startswith(str(home / ".local/bin"))
+    assert payload["EnvironmentVariables"]["HOME"] == str(home)
+    assert payload["EnvironmentVariables"]["USER"] == payload["EnvironmentVariables"]["LOGNAME"]
     assert [call[1] for call in calls] == ["bootout", "bootstrap"]
 
     uninstall_agent(home=home, uid=501, runner=runner)

@@ -5,6 +5,7 @@
   const SETTLE_MS = 5000;
   let observer = null;
   let timer = null;
+  let locationTimer = null;
   let generation = 0;
   let lastHref = location.href;
   let lastMutationAt = 0;
@@ -13,17 +14,84 @@
   let saving = false;
   let saveAgain = false;
   let pendingNewChat = null;
+  let contextStopped = false;
+
+  function contextAvailable() {
+    return (
+      !contextStopped &&
+      typeof chrome !== "undefined" &&
+      chrome.runtime &&
+      chrome.runtime.id !== undefined
+    );
+  }
+
+  function invalidate() {
+    contextStopped = true;
+    stop();
+    clearInterval(locationTimer);
+    locationTimer = null;
+  }
+
+  function handleContextError(error) {
+    if (capture.isContextInvalidated(error)) {
+      invalidate();
+      return true;
+    }
+    return false;
+  }
 
   function storageGet(area, defaults) {
-    return new Promise((resolve) => area.get(defaults, resolve));
+    if (!contextAvailable()) {
+      invalidate();
+      return Promise.resolve(defaults);
+    }
+    return new Promise((resolve, reject) => {
+      try {
+        area.get(defaults, resolve);
+      } catch (error) {
+        if (handleContextError(error)) {
+          resolve(defaults);
+        } else {
+          reject(error);
+        }
+      }
+    });
   }
 
   function storageSet(area, values) {
-    return new Promise((resolve) => area.set(values, resolve));
+    if (!contextAvailable()) {
+      invalidate();
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      try {
+        area.set(values, resolve);
+      } catch (error) {
+        if (handleContextError(error)) {
+          resolve();
+        } else {
+          reject(error);
+        }
+      }
+    });
   }
 
   function sendMessage(message) {
-    return new Promise((resolve) => chrome.runtime.sendMessage(message, resolve));
+    if (!contextAvailable()) {
+      invalidate();
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.runtime.sendMessage(message, resolve);
+      } catch (error) {
+        if (handleContextError(error)) {
+          resolve();
+        } else {
+          reject(error);
+        }
+      }
+    });
   }
 
   function currentSnapshot() {
@@ -42,11 +110,19 @@
   }
 
   function schedule(expectedGeneration, delay) {
+    if (!contextAvailable()) {
+      invalidate();
+      return;
+    }
     clearTimeout(timer);
     timer = setTimeout(() => settled(expectedGeneration), delay);
   }
 
   async function settled(expectedGeneration) {
+    if (!contextAvailable()) {
+      invalidate();
+      return;
+    }
     if (expectedGeneration !== generation) {
       return;
     }
@@ -122,6 +198,10 @@
 
   async function startForLocation() {
     stop();
+    if (!contextAvailable()) {
+      invalidate();
+      return;
+    }
     const expectedGeneration = generation;
     const route = capture.parseGemUrl(location.href);
     if (!route) {
@@ -162,6 +242,10 @@
   }
 
   async function onSendEvent() {
+    if (!contextAvailable()) {
+      invalidate();
+      return;
+    }
     const route = capture.parseGemRoute(location.href);
     if (!route) {
       return;
@@ -226,7 +310,16 @@
     true,
   );
 
-  setInterval(() => {
+  if (!contextAvailable()) {
+    invalidate();
+    return;
+  }
+
+  locationTimer = setInterval(() => {
+    if (!contextAvailable()) {
+      invalidate();
+      return;
+    }
     if (location.href !== lastHref) {
       lastHref = location.href;
       startForLocation();

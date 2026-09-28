@@ -65,6 +65,10 @@ class Workspace:
         return self.root / "auto.log"
 
     @property
+    def auto_notified_path(self) -> Path:
+        return self.root / "auto-notified.json"
+
+    @property
     def auto_lock_path(self) -> Path:
         return self.root / ".auto.lock"
 

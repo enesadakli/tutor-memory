@@ -297,6 +297,12 @@
     return typeof response === "object" && response !== null && response.ok === true;
   }
 
+  function isContextInvalidated(error) {
+    return String((error && error.message) || error || "").includes(
+      "Extension context invalidated",
+    );
+  }
+
   const api = {
     SELECTORS,
     parseGemUrl,
@@ -308,6 +314,7 @@
     toTranscript,
     sidecar,
     isHostOk,
+    isContextInvalidated,
   };
   root.TutorMemoryCapture = api;
   if (typeof module !== "undefined" && module.exports) {

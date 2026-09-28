@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import plistlib
@@ -26,6 +27,7 @@ from .extract import Extractor, make_extractor
 from .ingest import _parse_manual, ingest
 from .models import (
     DecisionFile,
+    ExtractResult,
     Hypothesis,
     Instruction,
     ProfileState,
@@ -217,6 +219,46 @@ def _log(ws: Workspace, message: str, *, timestamp: datetime | None = None) -> N
     _append(ws.auto_log_path, f"{stamp} {message}\n")
 
 
+def _notification_errors(ws: Workspace) -> dict[str, str]:
+    if not ws.auto_notified_path.exists():
+        return {}
+    try:
+        value = json.loads(ws.auto_notified_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: item for key, item in value.items() if isinstance(key, str) and isinstance(item, str)
+    }
+
+
+def _record_failure_notification(
+    ws: Workspace,
+    session_id: str,
+    error: str,
+    *,
+    enabled: bool,
+    notify: Notifier,
+) -> None:
+    if not enabled:
+        return
+    errors = _notification_errors(ws)
+    if errors.get(session_id) != error:
+        notify(f"Automatic processing failed: {session_id}: {error}")
+    if errors.get(session_id) != error:
+        errors[session_id] = error
+        write_json(ws.auto_notified_path, errors)
+
+
+def _clear_failure_notification(ws: Workspace, session_id: str) -> None:
+    errors = _notification_errors(ws)
+    if session_id not in errors:
+        return
+    del errors[session_id]
+    write_json(ws.auto_notified_path, errors)
+
+
 class _AutoLock:
     def __init__(self, path: Path, now_epoch: float) -> None:
         self.path = path
@@ -387,15 +429,25 @@ def run_auto(
                 failed.append(path.stem)
                 if not dry_run:
                     _log(ws, f"{path.name}: {exc}", timestamp=current_time)
-                if config.auto.notify and not dry_run:
-                    notify(f"Automatic processing failed: {path.name}: {exc}")
+                    _record_failure_notification(
+                        ws,
+                        path.stem,
+                        str(exc),
+                        enabled=config.auto.notify,
+                        notify=notify,
+                    )
                 continue
             except (OSError, TutormemError) as exc:
                 failed.append(path.stem)
                 if not dry_run:
                     _log(ws, f"{path.name}: {exc}", timestamp=current_time)
-                if config.auto.notify and not dry_run:
-                    notify(f"Automatic processing failed: {path.name}: {exc}")
+                    _record_failure_notification(
+                        ws,
+                        path.stem,
+                        str(exc),
+                        enabled=config.auto.notify,
+                        notify=notify,
+                    )
                 continue
 
             existing = next(
@@ -404,6 +456,8 @@ def run_auto(
             )
             if existing is not None and existing.content_sha256 == item.sha256:
                 if _is_complete(ws, existing, config.auto.approve):
+                    if not dry_run:
+                        _clear_failure_notification(ws, existing.session_id)
                     continue
                 action = "retry"
             else:
@@ -435,13 +489,26 @@ def run_auto(
                     assert existing is not None
                     session = existing
 
-                session_extractor = effective_extractor
-                if session_extractor is None:
-                    session_extractor = make_extractor(config.extract.extractor, config, base=base)
-                extracted = session_extractor.extract(session, _open_items(state))
-                write_json(ws.observations_path(session.session_id), extracted)
-                verified = verify(session, extracted.observations)
-                write_json(ws.verify_path(session.session_id), verified)
+                try:
+                    extracted = load_artifact(
+                        ws.observations_path(session.session_id), ExtractResult, session
+                    )
+                    verified = load_artifact(
+                        ws.verify_path(session.session_id), VerifyResult, session
+                    )
+                except StaleArtifactError:
+                    extracted = None
+                    verified = None
+                if extracted is None or verified is None:
+                    session_extractor = effective_extractor
+                    if session_extractor is None:
+                        session_extractor = make_extractor(
+                            config.extract.extractor, config, base=base
+                        )
+                    extracted = session_extractor.extract(session, _open_items(state))
+                    write_json(ws.observations_path(session.session_id), extracted)
+                    verified = verify(session, extracted.observations)
+                    write_json(ws.verify_path(session.session_id), verified)
                 packet = write_packet(session, verified, state)
                 write_text(ws.review_path(session.session_id), packet)
                 proposed = effective_reviewer.propose(packet, verified)
@@ -452,11 +519,17 @@ def run_auto(
                     state = _replayed(ws, config)
                 processed.append(session.session_id)
                 changed = True
+                _clear_failure_notification(ws, session.session_id)
             except (OSError, TutormemError) as exc:
                 failed.append(item.session_id)
                 _log(ws, f"{item.session_id}: {exc}", timestamp=current_time)
-                if config.auto.notify:
-                    notify(f"Automatic processing failed: {item.session_id}: {exc}")
+                _record_failure_notification(
+                    ws,
+                    item.session_id,
+                    str(exc),
+                    enabled=config.auto.notify,
+                    notify=notify,
+                )
 
         if dry_run:
             return AutoResult(tuple(processed), tuple(failed), False)
@@ -575,6 +648,9 @@ def install_agent(
         "StandardOutPath": str((ws.root / "auto.stdout.log").resolve()),
         "StandardErrorPath": str((ws.root / "auto.stderr.log").resolve()),
         "EnvironmentVariables": {
+            "USER": getpass.getuser(),
+            "LOGNAME": getpass.getuser(),
+            "HOME": str(user_home),
             "PATH": ":".join(
                 [
                     str(user_home / ".local" / "bin"),
@@ -583,7 +659,7 @@ def install_agent(
                     "/usr/bin",
                     "/bin",
                 ]
-            )
+            ),
         },
     }
     path.parent.mkdir(parents=True, exist_ok=True)

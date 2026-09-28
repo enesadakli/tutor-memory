@@ -179,7 +179,7 @@ session_id: str | None = None, date: str | None = None, replace: bool = False) -
 ### 4.4 review (`review.py`)
 - `write_packet(session: Session, result: VerifyResult, profile: ProfileState) -> str` — Markdown: every verified observation with id, kind, claim, proposed_match (and that item's claim), each quote with ±200 chars of surrounding turn text; then rejected observations with reasons; then the open/active items list; then instructions for the reviewer (the evidence rule, and the rule that a claim may never be broader than its quotes).
 - `skeleton(result: VerifyResult) -> DecisionFile` — no decisions.
-- `ClaudeReviewer(model: str, timeout_s: int).propose(packet: str, result: VerifyResult) -> DecisionFile` — runs `claude -p` with the packet on **stdin**, tools disabled (`--disallowedTools` for every built-in tool, or `--tools ""` if supported), `--output-format json`, asks for a DecisionFile JSON; every decision gets `reviewer="claude"`. Invalid output -> `ReviewerError`.
+- `ClaudeReviewer(model: str, timeout_s: int).propose(packet: str, result: VerifyResult) -> DecisionFile` — runs `claude -p --output-format json --model <model> --tools "" --no-session-persistence --disable-slash-commands --strict-mcp-config --mcp-config '{"mcpServers":{}}' --setting-sources "" --system-prompt <minimal reviewer prompt>` with the packet on **stdin** and a fresh temporary directory as cwd. Every decision gets `reviewer="claude"`. Invalid output -> `ReviewerError`.
 - `apply_decisions(result: VerifyResult, decisions: DecisionFile) -> SessionApproval`
   - sha or session_id mismatch -> `StaleArtifactError`.
   - Any verified observation without a decision -> `PendingReviewError` (the session is pending).
@@ -349,8 +349,10 @@ when its approved decision is complete (or its proposal exists in `approve = "no
 an incomplete run is retried. Changed content is ingested with replacement and keeps its index.
 Content already owned by another session id is skipped and logged.
 
-Each new, changed, or retried session is extracted with the configured extractor, verified,
-packetized, and reviewed by Claude. With `auto.approve = "claude"` the complete proposal is copied
+Each new or changed session is extracted with the configured extractor and verified. A retried
+session reuses current `observations.json` and `verify.json` artifacts and goes directly to review;
+missing or stale artifacts cause extraction and verification to run again. Every session is then
+packetized and reviewed by Claude. With `auto.approve = "claude"` the complete proposal is copied
 to `decisions.json` and immediately participates in replay. With `"none"`, processing stops after
 `decisions.proposed.json`, preserving the human approval gate.
 
@@ -375,7 +377,9 @@ revocable. If `auto.changelog_copy` is non-empty, the identical block is appende
 When `auto.notify = true`, macOS runs `osascript -e` with title `tutor-memory` and text containing
 the first three diff lines plus `…` when more exist. Quotes and backslashes are escaped. Other
 platforms silently skip notifications. Per-session failure notifications contain the session and
-error. The notifier is injectable for tests.
+error. `<ws>/auto-notified.json` maps session ids to their last notified error text: an identical
+failure is not notified again, a changed error is notified, and success removes the entry. Every
+failure is still appended to `auto.log`. The notifier is injectable for tests.
 
 ### 8.3 Revocation
 
@@ -390,7 +394,8 @@ decision, replays, renders, syncs unless `--no-sync`, appends a changelog block,
 `install-agent` writes `~/Library/LaunchAgents/com.tutormem.auto.plist` with the absolute
 `tutormem` executable (`shutil.which`, else absolute `sys.argv[0]`), arguments
 `--workspace <absolute ws> auto`, `StartInterval = interval_minutes * 60`, `RunAtLoad = true`, and
-stdout/stderr at `<ws>/auto.stdout.log` and `<ws>/auto.stderr.log`. Its environment PATH is
+stdout/stderr at `<ws>/auto.stdout.log` and `<ws>/auto.stderr.log`. Its environment includes
+`USER` and `LOGNAME` from `getpass.getuser()`, `HOME` set to the expanded user home, and PATH
 `~/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin` with `~` expanded. It prints the
 plist path and `launchctl bootstrap gui/<uid> <plist>`. With `--load`, it runs `bootout` (failure
 ignored) and then `bootstrap`. `uninstall-agent` runs `bootout` and removes the plist. The command

@@ -24,7 +24,13 @@ from tutormem.models import (
     VerifyResult,
     turns_sha256,
 )
-from tutormem.review import ClaudeReviewer, apply_decisions, skeleton, write_packet
+from tutormem.review import (
+    REVIEWER_SYSTEM_PROMPT,
+    ClaudeReviewer,
+    apply_decisions,
+    skeleton,
+    write_packet,
+)
 
 
 def test_review_prompt_distinguishes_standing_instructions_from_one_off_requests() -> None:
@@ -128,8 +134,10 @@ def test_claude_reviewer_success_forces_reviewer_and_disables_tools() -> None:
     result = _verified_result(_observation(1))
     captured: dict[str, object] = {}
 
-    def runner(args: list[str], stdin: str, timeout: float) -> subprocess.CompletedProcess[str]:
-        captured.update(args=args, stdin=stdin, timeout=timeout)
+    def runner(
+        args: list[str], stdin: str, timeout: float, *, cwd: Path
+    ) -> subprocess.CompletedProcess[str]:
+        captured.update(args=args, stdin=stdin, timeout=timeout, cwd=cwd, cwd_exists=cwd.is_dir())
         model_text = "Decision follows: " + json.dumps(_decision_payload(result))
         return subprocess.CompletedProcess(args, 0, json.dumps({"result": model_text}), "")
 
@@ -144,8 +152,19 @@ def test_claude_reviewer_success_forces_reviewer_and_disables_tools() -> None:
         "sonnet",
         "--tools",
         "",
+        "--no-session-persistence",
+        "--disable-slash-commands",
+        "--strict-mcp-config",
+        "--mcp-config",
+        '{"mcpServers":{}}',
+        "--setting-sources",
+        "",
+        "--system-prompt",
+        REVIEWER_SYSTEM_PROMPT,
     ]
     assert "PACKET" in str(captured["stdin"])
+    assert captured["cwd_exists"] is True
+    assert not Path(captured["cwd"]).exists()  # type: ignore[arg-type]
     assert decisions.decisions[0].reviewer == "claude"
     assert decisions.revocations[0].reviewer == "claude"
 
@@ -153,7 +172,10 @@ def test_claude_reviewer_success_forces_reviewer_and_disables_tools() -> None:
 def test_claude_reviewer_rejects_mismatched_sha() -> None:
     result = _verified_result(_observation(1))
 
-    def runner(args: list[str], stdin: str, timeout: float) -> subprocess.CompletedProcess[str]:
+    def runner(
+        args: list[str], stdin: str, timeout: float, *, cwd: Path
+    ) -> subprocess.CompletedProcess[str]:
+        del stdin, timeout, cwd
         text = json.dumps(_decision_payload(result, sha="f" * 64))
         return subprocess.CompletedProcess(args, 0, json.dumps({"result": text}), "")
 
@@ -168,7 +190,10 @@ def test_claude_reviewer_rejects_mismatched_sha() -> None:
 def test_claude_reviewer_rejects_error_and_invalid_json(stdout: str) -> None:
     result = _verified_result(_observation(1))
 
-    def runner(args: list[str], stdin: str, timeout: float) -> subprocess.CompletedProcess[str]:
+    def runner(
+        args: list[str], stdin: str, timeout: float, *, cwd: Path
+    ) -> subprocess.CompletedProcess[str]:
+        del stdin, timeout, cwd
         return subprocess.CompletedProcess(args, 0, stdout, "")
 
     with pytest.raises(ReviewerError):
@@ -178,13 +203,19 @@ def test_claude_reviewer_rejects_error_and_invalid_json(stdout: str) -> None:
 def test_claude_reviewer_converts_timeout_and_nonzero_exit() -> None:
     result = _verified_result(_observation(1))
 
-    def timeout(args: list[str], stdin: str, seconds: float) -> subprocess.CompletedProcess[str]:
+    def timeout(
+        args: list[str], stdin: str, seconds: float, *, cwd: Path
+    ) -> subprocess.CompletedProcess[str]:
+        del stdin, cwd
         raise subprocess.TimeoutExpired(args, seconds)
 
     with pytest.raises(ReviewerError, match="timed out"):
         ClaudeReviewer("m", 1, runner=timeout).propose("packet", result)
 
-    def failed(args: list[str], stdin: str, seconds: float) -> subprocess.CompletedProcess[str]:
+    def failed(
+        args: list[str], stdin: str, seconds: float, *, cwd: Path
+    ) -> subprocess.CompletedProcess[str]:
+        del stdin, seconds, cwd
         return subprocess.CompletedProcess(args, 3, "", "failed")
 
     with pytest.raises(ReviewerError, match="status 3"):

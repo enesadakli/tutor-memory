@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 
 const {
   extractTurns,
+  isContextInvalidated,
   isHostOk,
   mergeTurns,
   parseGemRoute,
@@ -14,6 +15,13 @@ const {
   tutorToMarkdown,
   usefulTitle,
 } = require("../lib.js");
+
+test("isContextInvalidated recognizes extension reload errors", () => {
+  assert.equal(isContextInvalidated(new Error("Extension context invalidated.")), true);
+  assert.equal(isContextInvalidated("Unchecked: Extension context invalidated"), true);
+  assert.equal(isContextInvalidated(new Error("Other failure")), false);
+  assert.equal(isContextInvalidated(null), false);
+});
 
 test("isHostOk accepts only objects whose ok property is true", () => {
   assert.equal(isHostOk({ ok: true }), true);

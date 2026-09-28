@@ -181,6 +181,9 @@ target) and copy it to `<workspace>/tutormem.toml`.
 | `sync` | the rendered brief | Google Drive |
 | everything else | nothing | — |
 
+The Claude reviewer sends only the review packet with a minimal system prompt; project settings,
+skills, agents, and MCP servers are disabled for the call.
+
 Workspaces live outside the repository by default, at
 `~/.local/share/tutor-memory/default` (override with `--workspace` or
 `TUTORMEM_WORKSPACE`). Real transcripts, profiles, briefs, and credentials
