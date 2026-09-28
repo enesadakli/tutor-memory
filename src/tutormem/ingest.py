@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Literal
@@ -17,6 +18,7 @@ _USER_MARKER_RE = re.compile(r"\*?User prompt:\s*")
 _RESPONSE_MARKER_RE = re.compile(r"\s*\*?\s*Response:\s*")
 _ITALIC_LINE_BREAK_RE = re.compile(r"\*[ \t]*\n?[ \t]*\*")
 _MANUAL_HEADING_RE = re.compile(r"^### (learner|tutor)$", re.MULTILINE)
+_TURN_FORMAT = "tutor-memory-turns/1"
 
 
 def slugify(stem: str) -> str:
@@ -82,9 +84,34 @@ def _parse_gemini(text: str) -> tuple[Turn, ...]:
     return tuple(turns)
 
 
+def _parse_json(text: str) -> tuple[Turn, ...]:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ParseError(f"invalid turns JSON: {exc}") from exc
+    if not isinstance(payload, dict) or set(payload) != {"format", "turns"}:
+        raise ParseError("turns JSON must contain only format and turns")
+    if payload["format"] != _TURN_FORMAT or not isinstance(payload["turns"], list):
+        raise ParseError("invalid turns JSON format")
+    turns: list[Turn] = []
+    for index, raw in enumerate(payload["turns"]):
+        if not isinstance(raw, dict) or set(raw) != {"speaker", "text"}:
+            raise ParseError(f"turn {index}: expected speaker and text")
+        speaker = raw["speaker"]
+        body = raw["text"]
+        if speaker not in ("learner", "tutor") or not isinstance(body, str):
+            raise ParseError(f"turn {index}: invalid speaker or text")
+        cleaned = _clean_turn(body)
+        if cleaned:
+            turns.append(Turn(speaker, cleaned))
+    if not any(turn.speaker == "learner" and turn.text for turn in turns):
+        raise ParseError("turns JSON has no non-empty learner turns")
+    return tuple(turns)
+
+
 def _read_input(path: Path) -> str:
     extension = path.suffix.lower()
-    if extension in (".txt", ".md"):
+    if extension in (".txt", ".md", ".json"):
         return path.read_text(encoding="utf-8")
     if extension == ".pdf":
         try:
@@ -103,7 +130,7 @@ def ingest(
     ws: Workspace,
     *,
     course: str,
-    speakers: Literal["gemini", "manual"] = "gemini",
+    speakers: Literal["gemini", "manual", "json"] = "gemini",
     session_id: str | None = None,
     date: str | None = None,
     replace: bool = False,
@@ -117,7 +144,12 @@ def ingest(
         raise ParseError("session_id must match [a-z0-9][a-z0-9-]*")
 
     text = _read_input(path)
-    turns = _parse_gemini(text) if speakers == "gemini" else _parse_manual(text)
+    if speakers == "gemini":
+        turns = _parse_gemini(text)
+    elif speakers == "manual":
+        turns = _parse_manual(text)
+    else:
+        turns = _parse_json(text)
     content_sha256 = turns_sha256(turns)
     existing = list_sessions(ws)
 

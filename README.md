@@ -52,7 +52,10 @@ mode then detects the exact course from the transcript, records what was covered
 starting point, and inserts the maintained section back into each rendered brief. A missing or
 unclear course falls back to the capture title and then `auto.default_course`.
 
-The extension hands transcripts to a local native messaging host, installed with `tutormem install-capture-host --extension-id <id>`, so captures do not appear as browser downloads. Chrome downloads remain available only as a fallback when the host is unavailable.
+The extension hands structured JSON transcripts to a local native messaging host, installed with
+`tutormem install-capture-host --extension-id <id>`, so captures do not appear as browser downloads.
+Chrome downloads remain available only as a fallback when the host is unavailable. Both paths use
+`gemini-<chatId>.turns.json` plus a SHA-bound sidecar; captures over 8 MiB are rejected, not downloaded.
 
 ```bash
 # One-time setup; inspect the printed plist and launchctl command.
@@ -65,7 +68,9 @@ tutormem revoke <id> --reason "Not a stable learning preference"
 This removes the human approval gate, not the deterministic gates: quotes still have to exist in
 learner turns, and inferences still need evidence from three distinct applied sessions by default.
 The trade-off is real: Claude can approve a wrong rule, and that rule can remain in the tutor brief
-until it is revoked. Set `auto.approve = "none"` to retain the old manual approval step.
+until it is revoked. Automatic proposals cannot revoke profile items, and all model text rendered in
+the brief is flattened, stripped of Markdown control markers, and length-capped. Set
+`auto.approve = "none"` to retain the manual approval step.
 
 ## The evidence rule
 
@@ -181,12 +186,14 @@ target) and copy it to `<workspace>/tutormem.toml`.
 
 | Command | Sends | To |
 |---|---|---|
-| `extract --extractor agy` | the full session transcript | Google (via `agy`) |
+| `extract --extractor agy` | the full transcript, open profile-item ids/claims, and `base.md` when `extract.send_base = true` (default) | Google (via `agy`) |
+| automatic progress extraction | the full transcript and exact configured course-name list | Google (via `agy`) |
 | `review --mode claude` | the review packet (quotes, claims, open items) | Anthropic (via `claude -p`) |
 | `sync` | the rendered brief | Google Drive |
 | everything else | nothing | — |
 
-The Claude reviewer sends only the review packet with a minimal system prompt; project settings,
+Set `extract.send_base = false` to keep the hand-written base brief out of extraction prompts.
+Open profile items are still sent for proposed matching. The Claude reviewer sends only the review packet with a minimal system prompt; project settings,
 skills, agents, and MCP servers are disabled for the call.
 
 Workspaces live outside the repository by default, at
@@ -235,8 +242,8 @@ and a person approves. One run is an anecdote, not a benchmark.
   own.
 - The tool updates the Google Doc; it has no way to confirm the tutor
   actually re-reads it before the next session.
-- Single-user CLI over a local workspace directory. No locking, no
-  concurrent-writer protection.
+- Single-user CLI over a local workspace directory. Automatic runs are serialized with `flock`,
+  but other CLI subcommands are not protected against concurrent writes.
 
 ## Development
 

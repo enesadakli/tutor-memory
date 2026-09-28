@@ -24,7 +24,7 @@
     if (parsed.protocol !== "https:" || parsed.hostname !== "gemini.google.com") {
       return null;
     }
-    const match = parsed.pathname.match(/^\/gem\/([0-9a-f]+)\/([0-9a-f]+)\/?$/i);
+    const match = parsed.pathname.match(/^\/gem\/([0-9a-f]{1,64})\/([0-9a-f]{1,64})\/?$/i);
     return match ? { gemId: match[1], chatId: match[2] } : null;
   }
 
@@ -38,7 +38,9 @@
     if (parsed.protocol !== "https:" || parsed.hostname !== "gemini.google.com") {
       return null;
     }
-    const match = parsed.pathname.match(/^\/gem\/([0-9a-f]+)(?:\/([0-9a-f]+))?\/?$/i);
+    const match = parsed.pathname.match(
+      /^\/gem\/([0-9a-f]{1,64})(?:\/([0-9a-f]{1,64}))?\/?$/i,
+    );
     return match ? { gemId: match[1], chatId: match[2] || null } : null;
   }
 
@@ -273,11 +275,18 @@
     return merged;
   }
 
-  function toTranscript(turns) {
-    const blocks = (turns || [])
-      .filter((turn) => turn.complete)
-      .map((turn) => `### learner\n${turn.learner}\n\n### tutor\n${turn.tutor}`);
-    return blocks.length ? `${blocks.join("\n\n").trim()}\n` : "";
+  function toTranscriptJson(turns) {
+    const serialized = [];
+    for (const turn of turns || []) {
+      if (!turn.complete) {
+        continue;
+      }
+      serialized.push({ speaker: "learner", text: String(turn.learner || "") });
+      serialized.push({ speaker: "tutor", text: String(turn.tutor || "") });
+    }
+    return serialized.length
+      ? `${JSON.stringify({ format: "tutor-memory-turns/1", turns: serialized }, null, 2)}\n`
+      : "";
   }
 
   function sidecar({ gemId, chatId, title, url, turns, now }) {
@@ -311,7 +320,7 @@
     tutorToMarkdown,
     extractTurns,
     mergeTurns,
-    toTranscript,
+    toTranscriptJson,
     sidecar,
     isHostOk,
     isContextInvalidated,

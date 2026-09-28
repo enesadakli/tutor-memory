@@ -76,6 +76,41 @@
     });
   }
 
+  function storageRemove(area, keys) {
+    if (!contextAvailable()) {
+      invalidate();
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      try {
+        area.remove(keys, resolve);
+      } catch (error) {
+        if (handleContextError(error)) {
+          resolve();
+        } else {
+          reject(error);
+        }
+      }
+    });
+  }
+
+  async function pruneStoredChats() {
+    const values = await storageGet(chrome.storage.local, null);
+    const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    const expired = Object.entries(values || {})
+      .filter(([key, value]) => {
+        if (!key.startsWith("chat:")) {
+          return false;
+        }
+        const savedAt = value && typeof value === "object" ? Date.parse(value.savedAt) : NaN;
+        return !Number.isFinite(savedAt) || savedAt < cutoff;
+      })
+      .map(([key]) => key);
+    if (expired.length) {
+      await storageRemove(chrome.storage.local, expired);
+    }
+  }
+
   function sendMessage(message) {
     if (!contextAvailable()) {
       invalidate();
@@ -162,12 +197,19 @@
     if (expectedGeneration !== generation) {
       return;
     }
-    const stored = Array.isArray(values[key]) ? values[key] : [];
+    const storedValue = values[key];
+    const stored = Array.isArray(storedValue)
+      ? storedValue
+      : storedValue && Array.isArray(storedValue.turns)
+        ? storedValue.turns
+        : [];
     const fresh = capture.extractTurns(document).filter((turn) => turn.id);
     const merged = capture.mergeTurns(stored, fresh);
-    const before = capture.toTranscript(stored);
-    const transcript = capture.toTranscript(merged);
-    await storageSet(chrome.storage.local, { [key]: merged });
+    const before = capture.toTranscriptJson(stored);
+    const transcript = capture.toTranscriptJson(merged);
+    await storageSet(chrome.storage.local, {
+      [key]: { turns: merged, savedAt: new Date().toISOString() },
+    });
     if (transcript === before || !transcript || expectedGeneration !== generation) {
       return;
     }
@@ -332,5 +374,5 @@
     }
   });
 
-  startForLocation();
+  pruneStoredChats().finally(startForLocation);
 })();

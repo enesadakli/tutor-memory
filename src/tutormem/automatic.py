@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import dataclasses
+import fcntl
 import getpass
+import hashlib
 import json
 import os
 import plistlib
@@ -13,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from .config import Config
+from .config import Config, store_resolved_tools
 from .errors import (
     AutomaticModeError,
     DuplicateContentError,
@@ -25,7 +28,7 @@ from .errors import (
     TutormemError,
 )
 from .extract import Extractor, ProgressExtractor, ProgressResult, ProgressRun, make_extractor
-from .ingest import _parse_manual, ingest
+from .ingest import _MANUAL_HEADING_RE, _parse_json, _parse_manual, ingest
 from .models import (
     DecisionFile,
     ExtractResult,
@@ -42,6 +45,7 @@ from .progress import apply_session, load_progress, render_progress, write_progr
 from .promote import replay
 from .render import render_brief, render_profile
 from .review import ClaudeReviewer, apply_decisions, write_packet
+from .security import sanitize_brief_text
 from .storage import (
     Workspace,
     list_sessions,
@@ -53,7 +57,6 @@ from .storage import (
 from .sync import sync as sync_brief
 from .verify import verify
 
-_LOCK_MAX_AGE_S = 60 * 60
 CommandRunner = Callable[[list[str]], subprocess.CompletedProcess[Any]]
 Notifier = Callable[[str], None]
 Syncer = Callable[[Workspace, Config], str]
@@ -219,7 +222,7 @@ def notify_macos(
         return
     escaped = text.replace("\\", "\\\\").replace('"', '\\"')
     script = f'display notification "{escaped}" with title "tutor-memory"'
-    (runner or _default_command_runner)(["osascript", "-e", script])
+    (runner or _default_command_runner)(["/usr/bin/osascript", "-e", script])
 
 
 def _notification_text(lines: Sequence[str]) -> str:
@@ -251,18 +254,19 @@ def _notification_errors(ws: Workspace) -> dict[str, str]:
 def _record_failure_notification(
     ws: Workspace,
     session_id: str,
-    error: str,
+    error: BaseException,
     *,
     enabled: bool,
     notify: Notifier,
 ) -> None:
     if not enabled:
         return
+    error_class = type(error).__name__
     errors = _notification_errors(ws)
-    if errors.get(session_id) != error:
-        notify(f"Automatic processing failed: {session_id}: {error}")
-    if errors.get(session_id) != error:
-        errors[session_id] = error
+    if errors.get(session_id) != error_class:
+        notify(f"Automatic processing failed: {session_id}: {error_class}")
+    if errors.get(session_id) != error_class:
+        errors[session_id] = error_class
         write_json(ws.auto_notified_path, errors)
 
 
@@ -277,39 +281,33 @@ def _clear_failure_notification(ws: Workspace, session_id: str) -> None:
 class _AutoLock:
     def __init__(self, path: Path, now_epoch: float) -> None:
         self.path = path
-        self.now_epoch = now_epoch
+        del now_epoch
+        self.descriptor: int | None = None
         self.acquired = False
 
     def acquire(self) -> bool:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        for _ in range(2):
-            try:
-                descriptor = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            except FileExistsError:
-                try:
-                    age = self.now_epoch - self.path.stat().st_mtime
-                except FileNotFoundError:
-                    continue
-                if age <= _LOCK_MAX_AGE_S:
-                    return False
-                try:
-                    self.path.unlink()
-                except FileNotFoundError:
-                    pass
-                continue
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                handle.write(f"{os.getpid()}\n")
-            self.acquired = True
-            return True
-        return False
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        descriptor = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(descriptor)
+            return False
+        try:
+            os.ftruncate(descriptor, 0)
+            os.write(descriptor, f"{os.getpid()}\n".encode())
+        except OSError:
+            os.close(descriptor)
+            raise
+        self.descriptor = descriptor
+        self.acquired = True
+        return True
 
     def release(self) -> None:
-        if self.acquired:
-            try:
-                self.path.unlink()
-            except FileNotFoundError:
-                pass
-            self.acquired = False
+        if self.descriptor is not None:
+            os.close(self.descriptor)
+            self.descriptor = None
+        self.acquired = False
 
 
 def _sidecar_date(value: Any) -> str:
@@ -326,8 +324,21 @@ def _sidecar_date(value: Any) -> str:
     return parsed.date().isoformat()
 
 
+def _sidecar_path(path: Path) -> Path:
+    if path.name.endswith(".turns.json"):
+        return path.with_name(path.name.removesuffix(".turns.json") + ".json")
+    return path.with_suffix(".json")
+
+
+def _path_session_id(path: Path) -> str:
+    name = path.name.removesuffix(".turns.json").removesuffix(".md")
+    return "gem-" + name.removeprefix("gemini-").lower()
+
+
 def _inbox_item(path: Path, config: Config) -> _InboxItem:
-    sidecar_path = path.with_suffix(".json")
+    is_json = path.name.endswith(".turns.json")
+    base_name = path.name.removesuffix(".turns.json") if is_json else path.stem
+    sidecar_path = _sidecar_path(path)
     try:
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -341,10 +352,36 @@ def _inbox_item(path: Path, config: Config) -> _InboxItem:
     title = sidecar.get("title")
     if title is not None and not isinstance(title, str):
         raise SchemaError(f"sidecar {sidecar_path.name}: invalid title")
+    expected_name = f"gemini-{chat_id}"
+    if base_name.lower() != expected_name.lower():
+        raise SchemaError(f"sidecar {sidecar_path.name}: chat_id does not match filename")
     try:
-        turns = _parse_manual(path.read_text(encoding="utf-8"))
+        transcript_text = path.read_text(encoding="utf-8")
+        if is_json:
+            turns = _parse_json(transcript_text)
+        else:
+            turns = _parse_manual(transcript_text)
+            expected_turns = sidecar.get("turns")
+            if (
+                type(expected_turns) is not int
+                or expected_turns < 1
+                or len(turns) != expected_turns * 2
+                or any(
+                    turn.speaker != ("learner" if index % 2 == 0 else "tutor")
+                    for index, turn in enumerate(turns)
+                )
+            ):
+                raise ParseError("legacy manual transcript has an unsafe role sentinel")
+            if any(_MANUAL_HEADING_RE.search(turn.text) for turn in turns):
+                raise ParseError("legacy manual transcript contains an unsafe role sentinel")
     except OSError as exc:
         raise ParseError(f"cannot read transcript {path.name}: {exc}") from exc
+    expected_sha = sidecar.get("transcript_sha256")
+    actual_sha = hashlib.sha256(transcript_text.encode("utf-8")).hexdigest()
+    if is_json and (not isinstance(expected_sha, str) or expected_sha != actual_sha):
+        raise SchemaError(f"sidecar {sidecar_path.name}: transcript_sha256 mismatch")
+    if expected_sha is not None and expected_sha != actual_sha:
+        raise SchemaError(f"sidecar {sidecar_path.name}: transcript_sha256 mismatch")
     return _InboxItem(
         transcript=path,
         sidecar=sidecar,
@@ -382,6 +419,18 @@ def _undo_ids(state: ProfileState, lines: Sequence[str]) -> list[str]:
         item.id for item in state.hypotheses if item.status in ("open", "promoted")
     }
     return [target for target in eligible if any(line.endswith(f"({target})") for line in lines)]
+
+
+def _auto_approved(result: VerifyResult, proposed: DecisionFile) -> DecisionFile:
+    observations = {item.observation.id: item.observation for item in result.verified}
+    decisions = []
+    for decision in proposed.decisions:
+        observation = observations.get(decision.observation_id)
+        claim = decision.claim
+        if decision.action == "accept" and observation is not None:
+            claim = sanitize_brief_text(claim if claim is not None else observation.claim, 200)
+        decisions.append(dataclasses.replace(decision, claim=claim))
+    return dataclasses.replace(proposed, decisions=tuple(decisions), revocations=())
 
 
 def run_auto(
@@ -423,19 +472,32 @@ def run_auto(
         elif not inbox_path.is_dir():
             raise AutomaticModeError(f"inbox is not a directory: {inbox_path}")
         else:
-            paths = sorted(inbox_path.glob("gemini-*.md"))
+            json_paths = sorted(inbox_path.glob("gemini-*.turns.json"))
+            json_bases = {path.name.removesuffix(".turns.json").lower() for path in json_paths}
+            legacy_paths = [
+                path
+                for path in sorted(inbox_path.glob("gemini-*.md"))
+                if path.stem.lower() not in json_bases
+            ]
+            paths = json_paths + legacy_paths
 
-        base = ws.base_path.read_text(encoding="utf-8") if ws.base_path.exists() else None
+        base = (
+            ws.base_path.read_text(encoding="utf-8")
+            if config.extract.send_base and ws.base_path.exists()
+            else None
+        )
         effective_extractor = extractor
         effective_progress_extractor = progress_extractor
         effective_reviewer = reviewer or ClaudeReviewer(
-            config.review.claude_model, config.review.timeout_s
+            config.review.claude_model,
+            config.review.timeout_s,
+            executable=config.tools.claude,
         )
         progress_state = load_progress(ws) if config.progress.enabled else None
         progress_lines: list[str] = []
 
         for path in paths:
-            sidecar_path = path.with_suffix(".json")
+            sidecar_path = _sidecar_path(path)
             if not sidecar_path.exists():
                 continue
             try:
@@ -444,27 +506,29 @@ def run_auto(
                     continue
                 item = _inbox_item(path, config)
             except ParseError as exc:
-                if "no learner turns" in str(exc):
+                if "learner turns" in str(exc):
                     continue
-                failed.append(path.stem)
+                failure_id = _path_session_id(path)
+                failed.append(failure_id)
                 if not dry_run:
                     _log(ws, f"{path.name}: {exc}", timestamp=current_time)
                     _record_failure_notification(
                         ws,
-                        path.stem,
-                        str(exc),
+                        failure_id,
+                        exc,
                         enabled=config.auto.notify,
                         notify=notify,
                     )
                 continue
             except (OSError, TutormemError) as exc:
-                failed.append(path.stem)
+                failure_id = _path_session_id(path)
+                failed.append(failure_id)
                 if not dry_run:
                     _log(ws, f"{path.name}: {exc}", timestamp=current_time)
                     _record_failure_notification(
                         ws,
-                        path.stem,
-                        str(exc),
+                        failure_id,
+                        exc,
                         enabled=config.auto.notify,
                         notify=notify,
                     )
@@ -513,6 +577,7 @@ def run_auto(
                                 config.progress.model,
                                 config.extract.timeout_s,
                                 language=config.progress.language,
+                                executable=config.tools.agy,
                             )
                         progress_result = effective_progress_extractor.extract(
                             item.turns,
@@ -524,6 +589,13 @@ def run_auto(
                             f"{item.session_id}: progress extraction failed: {exc}",
                             timestamp=current_time,
                         )
+
+            if progress_result is not None:
+                progress_result = ProgressResult(
+                    progress_result.course,
+                    sanitize_brief_text(progress_result.covered, 200),
+                    sanitize_brief_text(progress_result.next, 160),
+                )
 
             try:
                 if action != "retry":
@@ -537,7 +609,9 @@ def run_auto(
                             item.transcript,
                             ws,
                             course=course,
-                            speakers="manual",
+                            speakers="json"
+                            if item.transcript.name.endswith(".turns.json")
+                            else "manual",
                             session_id=item.session_id,
                             date=item.date,
                             replace=action == "changed",
@@ -585,8 +659,15 @@ def run_auto(
                 proposed = effective_reviewer.propose(packet, verified)
                 write_json(ws.proposed_decisions_path(session.session_id), proposed)
                 if config.auto.approve == "claude":
-                    apply_decisions(verified, proposed)
-                    write_json(ws.decisions_path(session.session_id), proposed)
+                    approved = _auto_approved(verified, proposed)
+                    apply_decisions(verified, approved)
+                    write_json(ws.decisions_path(session.session_id), approved)
+                    for revocation in proposed.revocations:
+                        progress_lines.append(
+                            "ignored revocation proposal: "
+                            f"{revocation.target_id} "
+                            f"({sanitize_brief_text(revocation.reason, 160) or 'no reason'})"
+                        )
                     state = _replayed(ws, config)
                     if progress_state is not None and progress_result is not None:
                         updated_progress = apply_session(
@@ -614,7 +695,7 @@ def run_auto(
                 _record_failure_notification(
                     ws,
                     item.session_id,
-                    str(exc),
+                    exc,
                     enabled=config.auto.notify,
                     notify=notify,
                 )
@@ -727,6 +808,11 @@ def install_agent(
     user_home = (home or Path.home()).expanduser()
     resolved_executable = executable or shutil.which("tutormem") or sys.argv[0]
     resolved_executable = str(Path(resolved_executable).expanduser().resolve())
+    ws.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    store_resolved_tools(ws)
+    for log_name in ("auto.stdout.log", "auto.stderr.log"):
+        descriptor = os.open(ws.root / log_name, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        os.close(descriptor)
     path = user_home / "Library" / "LaunchAgents" / "com.tutormem.auto.plist"
     payload = {
         "Label": "com.tutormem.auto",
@@ -754,11 +840,11 @@ def install_agent(
     write_text(path, plistlib.dumps(payload, sort_keys=False).decode("utf-8"))
     user_id = os.getuid() if uid is None else uid
     command_runner = runner or _agent_runner
-    load_command = ["launchctl", "bootstrap", f"gui/{user_id}", str(path)]
+    load_command = ["/bin/launchctl", "bootstrap", f"gui/{user_id}", str(path)]
     print(path)
     print(" ".join(load_command))
     if load:
-        command_runner(["launchctl", "bootout", f"gui/{user_id}", str(path)])
+        command_runner(["/bin/launchctl", "bootout", f"gui/{user_id}", str(path)])
         completed = command_runner(load_command)
         if completed.returncode != 0:
             raise AutomaticModeError("launchctl bootstrap failed")
@@ -775,7 +861,7 @@ def uninstall_agent(
     user_home = (home or Path.home()).expanduser()
     path = user_home / "Library" / "LaunchAgents" / "com.tutormem.auto.plist"
     user_id = os.getuid() if uid is None else uid
-    (runner or _agent_runner)(["launchctl", "bootout", f"gui/{user_id}", str(path)])
+    (runner or _agent_runner)(["/bin/launchctl", "bootout", f"gui/{user_id}", str(path)])
     try:
         path.unlink()
     except FileNotFoundError:

@@ -129,7 +129,7 @@ def write_packet(session: Session, result: VerifyResult, profile: ProfileState) 
         lines.extend(
             [
                 "",
-                f"- `{rejected.observation.id}` — `{rejected.reason}`: {rejected.detail}",
+                f"- `{rejected.observation.id}` — `{rejected.reason}`",
             ]
         )
 
@@ -155,10 +155,18 @@ def skeleton(result: VerifyResult) -> DecisionFile:
 class ClaudeReviewer:
     """Propose review decisions using the configured command-line reviewer."""
 
-    def __init__(self, model: str, timeout_s: int, *, runner: Runner | None = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        timeout_s: int,
+        *,
+        runner: Runner | None = None,
+        executable: str = "claude",
+    ) -> None:
         self.model = model
         self.timeout_s = timeout_s
         self._runner = runner or _default_runner
+        self.executable = executable
 
     def propose(self, packet: str, result: VerifyResult) -> DecisionFile:
         """Return proposed decisions for a review packet."""
@@ -168,7 +176,7 @@ class ClaudeReviewer:
             raise ReviewerError(f"cannot read review prompt: {exc}") from exc
         prompt = Template(template).substitute(packet=packet)
         args = [
-            "claude",
+            self.executable,
             "-p",
             "--output-format",
             "json",

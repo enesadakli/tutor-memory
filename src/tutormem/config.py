@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import dataclasses
+import json
+import re
+import shutil
 import tomllib
 import types
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self, get_args, get_origin, get_type_hints
 
 from .errors import SchemaError
@@ -23,6 +27,7 @@ class ExtractConfig:
     extractor: Literal["agy", "file"] = "agy"
     model: str = "gemini-3.8-flash-medium"
     timeout_s: int = 300
+    send_base: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +62,12 @@ class ProgressConfig:
     next_label: str = "Next"
     language: str = "English"
     model: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ToolsConfig:
+    agy: str = "agy"
+    claude: str = "claude"
 
 
 def _section(cls: type[Any], raw: Any, name: str) -> Any:
@@ -97,6 +108,7 @@ class Config:
     sync: SyncConfig = field(default_factory=SyncConfig)
     auto: AutoConfig = field(default_factory=AutoConfig)
     progress: ProgressConfig = field(default_factory=ProgressConfig)
+    tools: ToolsConfig = field(default_factory=ToolsConfig)
 
     def __post_init__(self) -> None:
         if self.progress.model is None:
@@ -125,7 +137,7 @@ class Config:
             raise SchemaError(f"cannot read config: {exc}") from exc
         if not isinstance(raw, dict):
             raise SchemaError("config: expected table")
-        allowed = {"rules", "extract", "review", "sync", "auto", "progress"}
+        allowed = {"rules", "extract", "review", "sync", "auto", "progress", "tools"}
         unknown = set(raw) - allowed
         if unknown:
             raise SchemaError(f"config: unknown keys: {', '.join(sorted(unknown))}")
@@ -136,4 +148,21 @@ class Config:
             sync=_section(SyncConfig, raw.get("sync", {}), "sync"),
             auto=_section(AutoConfig, raw.get("auto", {}), "auto"),
             progress=_section(ProgressConfig, raw.get("progress", {}), "progress"),
+            tools=_section(ToolsConfig, raw.get("tools", {}), "tools"),
         )
+
+
+def store_resolved_tools(ws: Workspace) -> ToolsConfig:
+    """Resolve model CLIs once and persist their paths for scheduled runs."""
+    from .storage import write_text
+
+    def resolved(name: str) -> str:
+        found = shutil.which(name)
+        return str(Path(found).resolve()) if found is not None else name
+
+    tools = ToolsConfig(resolved("agy"), resolved("claude"))
+    existing = ws.config_path.read_text(encoding="utf-8") if ws.config_path.exists() else ""
+    existing = re.sub(r"(?ms)^\[tools\]\n.*?(?=^\[|\Z)", "", existing).rstrip()
+    section = f"[tools]\nagy = {json.dumps(tools.agy)}\nclaude = {json.dumps(tools.claude)}\n"
+    write_text(ws.config_path, (existing + "\n\n" if existing else "") + section)
+    return tools

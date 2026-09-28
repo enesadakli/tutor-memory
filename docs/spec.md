@@ -150,12 +150,13 @@ Errors live in `src/tutormem/errors.py`, all subclass `TutormemError`:
 `ReplayError`, `ExtractorError`, `ReviewerError`, `SyncError`.
 
 ### 4.1 ingest (`ingest.py`)
-`ingest(path: Path, ws: Workspace, *, course: str, speakers: Literal["gemini", "manual"] = "gemini",
+`ingest(path: Path, ws: Workspace, *, course: str, speakers: Literal["gemini", "manual", "json"] = "gemini",
 session_id: str | None = None, date: str | None = None, replace: bool = False) -> Session`
 
-- Input by extension: `.pdf` (text via `pypdf`, optional extra `pdf`; missing package -> `ParseError` naming the extra), `.txt`, `.md`.
+- Input by extension: `.pdf` (text via `pypdf`, optional extra `pdf`; missing package -> `ParseError` naming the extra), `.txt`, `.md`, `.json`.
 - `speakers="gemini"`: Gemini chat export. A learner turn starts at the marker `User prompt:` (optionally wrapped in `*...*` italics); the tutor turn starts at the following `Response:`. Text before the first marker is dropped. Export formatting on the marker line (the wrapping `*`) is removed. In learner turns, italic line-break artifacts (`*` optional whitespace, optional newline, optional whitespace, `*`) are replaced by a single space. Turn text is otherwise kept as is, except: strip each turn, collapse runs of 3+ newlines to 2. If no `User prompt:` marker is found -> `ParseError`.
 - `speakers="manual"`: Markdown where each turn starts with a line exactly `### learner` or `### tutor`. Text before the first heading -> `ParseError` unless blank. Zero learner turns -> `ParseError`.
+- `speakers="json"`: UTF-8 JSON in the form `{"format":"tutor-memory-turns/1","turns":[{"speaker":"learner"|"tutor","text":"..."}]}`. Unknown fields, wrong types/speakers, and input without a non-empty learner turn -> `ParseError`. Markdown-looking text never changes its speaker.
 - `session_id` default: slug of the file stem (lowercase ASCII, Turkish letters transliterated ç->c ğ->g ı->i İ->i ö->o ş->s ü->u, non `[a-z0-9]` runs -> `-`, trimmed).
 - Same `content_sha256` as any existing session -> `DuplicateContentError` (even with `replace`).
 - Existing `session_id` without `replace` -> `SessionExistsError`. With `replace`: keeps `index`; run artifacts become stale automatically via the sha.
@@ -175,11 +176,11 @@ session_id: str | None = None, date: str | None = None, replace: bool = False) -
 `class Extractor(Protocol): name: str; model: str | None; def extract(self, session: Session, open_items: Sequence[Instruction | Hypothesis]) -> ExtractResult`
 
 - `FileExtractor(path)`: reads a JSON file `{"observations": [...]}` whose items are Observation dicts **without** `id`; assigns ids `<session_id>:<n>`. Invalid items go to `dropped`.
-- `AgyExtractor(model, timeout_s)`: runs the Antigravity CLI headless. Prompt = `prompts/extract.md` template filled with the canonical transcript (turns labeled `[learner]`/`[tutor]` with their turn index), the open items (id + claim), and the stripped contents of `base.md` under "Already in the brief (do not propose these again)". An absent or blank base is rendered as `(none)`. Transcript text must **not** be passed as a command-line argument (it would show in `ps`); pass it on stdin or via a temp file (mode 0600, deleted afterwards). Use `--json-schema` with the observation-list schema, `--sandbox`, `--print-timeout <timeout_s>s`. Parse the first JSON value in stdout; invalid items -> `dropped`; non-zero exit, timeout, or no JSON -> `ExtractorError` with stderr truncated to 500 chars.
+- `AgyExtractor(model, timeout_s)`: runs the Antigravity CLI headless. Prompt = `prompts/extract.md` template filled with the canonical transcript (turns labeled `[learner]`/`[tutor]` with their turn index), the open items (id + claim), and, when `extract.send_base = true`, the stripped contents of `base.md` under "Already in the brief (do not propose these again)". An absent, disabled, or blank base is rendered as `(none)`. Transcript text must **not** be passed as a command-line argument (it would show in `ps`); pass it on stdin or via a temp file (mode 0600, deleted afterwards). Use `--json-schema` with the observation-list schema, `--sandbox`, `--print-timeout <timeout_s>s`. Parse the first JSON value in stdout; invalid items -> `dropped`; non-zero exit, timeout, or no JSON -> `ExtractorError` with stderr truncated to 500 chars.
 - `make_extractor(name: Literal["agy", "file"], config: Config, *, path: Path | None = None) -> Extractor`.
 
 ### 4.4 review (`review.py`)
-- `write_packet(session: Session, result: VerifyResult, profile: ProfileState) -> str` — Markdown: every verified observation with id, kind, claim, proposed_match (and that item's claim), each quote with ±200 chars of surrounding turn text; then rejected observations with reasons; then the open/active items list; then instructions for the reviewer (the evidence rule, and the rule that a claim may never be broader than its quotes).
+- `write_packet(session: Session, result: VerifyResult, profile: ProfileState) -> str` — Markdown: every verified observation with id, kind, claim, proposed_match (and that item's claim), each quote with ±200 chars of surrounding turn text; then rejected observation ids and reason enums only (never rejected quote/detail text); then the open/active items list; then instructions for the reviewer (the evidence rule, and the rule that a claim may never be broader than its quotes).
 - `skeleton(result: VerifyResult) -> DecisionFile` — no decisions.
 - `ClaudeReviewer(model: str, timeout_s: int).propose(packet: str, result: VerifyResult) -> DecisionFile` — runs `claude -p --output-format json --model <model> --tools "" --no-session-persistence --disable-slash-commands --strict-mcp-config --mcp-config '{"mcpServers":{}}' --setting-sources "" --system-prompt <minimal reviewer prompt>` with the packet on **stdin** and a fresh temporary directory as cwd. Every decision gets `reviewer="claude"`. Invalid output -> `ReviewerError`.
 - `apply_decisions(result: VerifyResult, decisions: DecisionFile) -> SessionApproval`
@@ -265,7 +266,7 @@ Global: `--workspace PATH`. Subcommands:
 
 | Command | Effect |
 |---|---|
-| `ingest PATH --course C [--speakers gemini\|manual] [--session-id ID] [--date D] [--replace]` | 4.1 |
+| `ingest PATH --course C [--speakers gemini\|manual\|json] [--session-id ID] [--date D] [--replace]` | 4.1 |
 | `extract SID [--extractor agy\|file] [--from PATH]` | writes `observations.json` |
 | `verify SID` | writes `verify.json` |
 | `review SID [--mode packet\|claude]` | writes `review.md` (+ `decisions.proposed.json` in claude mode) |
@@ -290,8 +291,8 @@ Exit codes: 0 ok, 1 `TutormemError` (message on stderr, no traceback), 2 usage.
 ## 6. Privacy rules
 
 - Real transcripts, profiles, briefs, Doc ids and credentials never enter the repository. The repo ships only synthetic data under `examples/` and `tests/fixtures/`.
-- `.gitignore` excludes `sessions/`, `runs/`, `state/`, `out/`, `*.log`, `credentials*`, `client_secret*.json`, `token.json` everywhere except under `examples/` and `tests/fixtures/`.
-- Data leaving the machine: `extract --extractor agy` sends the full transcript to Google; `review --mode claude` sends the review packet to Anthropic; `sync` uploads the brief to Google Drive. Nothing else calls the network.
+- `.gitignore` excludes workspace outputs, captures, logs, and credentials everywhere. Only individually listed synthetic repository files are re-included; credential names remain ignored under every directory.
+- Data leaving the machine: `extract --extractor agy` sends the full transcript, open profile items, and (by default) `base.md` to Google; automatic progress extraction sends the transcript and known course list to Google; `review --mode claude` sends the review packet to Anthropic; `sync` uploads the brief to Google Drive. Nothing else calls the network. `extract.send_base = false` omits `base.md`.
 - Automatic mode invokes those same three operations without interactive confirmation when its
   configured gates allow them.
 
@@ -306,6 +307,7 @@ stale_after = 5
 extractor = "agy"
 model = "gemini-3.8-flash-medium"
 timeout_s = 300
+send_base = true
 
 [review]
 mode = "packet"        # or "claude"
@@ -332,6 +334,10 @@ last_label = "Last session"
 next_label = "Next"
 language = "English"
 # model = "gemini-3.8-flash-medium"  # defaults to extract.model
+
+[tools]
+agy = "agy"
+claude = "claude"
 ```
 
 `Config.load(ws) -> Config` returns defaults when the file is missing; unknown keys -> `SchemaError`.
@@ -340,23 +346,25 @@ language = "English"
 
 ### 8.1 Capture inbox and orchestration
 
-The capture extension writes `gemini-<chatId>.md` in manual-speaker format and then writes the
-matching JSON sidecar:
+The capture extension writes `gemini-<chatId>.turns.json` in structured
+`tutor-memory-turns/1` format and then writes the matching JSON sidecar:
 
 ```json
-{"source":"gemini-gem","gem_id":"...","chat_id":"...","title":"...","url":"...","turns":2,"updated_at":"..."}
+{"source":"gemini-gem","gem_id":"...","chat_id":"...","title":"...","url":"...","turns":2,"updated_at":"...","transcript_sha256":"..."}
 ```
 
-`tutormem auto` creates `<ws>/.auto.lock` exclusively. A lock at most 60 minutes old makes the
-command print `another run in progress` and exit 0. An older lock is replaced. A lock acquired by
-the current process is always removed in `finally`.
+`tutormem auto` opens `<ws>/.auto.lock` and holds `flock(LOCK_EX | LOCK_NB)` on its descriptor for
+the whole run. Contention prints `another run in progress` and exits 0. Lock-file age is ignored;
+release is by closing the descriptor, and the file is not deleted.
 
-The command scans `gemini-*.md` files with sidecars. Both mtimes must be at least `idle_minutes`
+The command scans `gemini-*.turns.json` files with sidecars. Both mtimes must be at least `idle_minutes`
 old (CLI override, else `auto.idle_minutes`); files without a learner turn are skipped. The
 session id is `gem-` plus lowercased `chat_id`, course is the non-blank sidecar title or
 `auto.default_course`, and date is the local calendar date of `updated_at`.
 
-An unseen id is ingested with manual speakers. For an existing id, identical content is skipped
+An unseen id is ingested with JSON speakers. Legacy `gemini-*.md` files remain readable only when
+no structured file exists; their sidecar count and strict learner/tutor alternation must match,
+otherwise the session is logged and skipped as an unsafe role sentinel. For an existing id, identical content is skipped
 when its approved decision is complete (or its proposal exists in `approve = "none"` mode), while
 an incomplete run is retried. Changed content is ingested with replacement and keeps its index.
 Content already owned by another session id is skipped and logged.
@@ -364,13 +372,15 @@ Content already owned by another session id is skipped and logged.
 Each new or changed session is extracted with the configured extractor and verified. A retried
 session reuses current `observations.json` and `verify.json` artifacts and goes directly to review;
 missing or stale artifacts cause extraction and verification to run again. Every session is then
-packetized and reviewed by Claude. With `auto.approve = "claude"` the complete proposal is copied
-to `decisions.json` and immediately participates in replay. With `"none"`, processing stops after
+packetized and reviewed by Claude. With `auto.approve = "claude"`, proposed revocations are dropped
+and logged as ignored; revocation remains human-only through `tutormem revoke`. Every accepted
+claim is sanitized and capped at 200 characters before `decisions.json` is written. With `"none"`, processing stops after
 `decisions.proposed.json`, preserving the human approval gate.
 
 After changes, the command replays and renders once more, syncs unless `--no-sync` or
 `auto.sync = false`, appends the changelog, and notifies. `--dry-run` only prints sessions that
-would be processed and leaves no persistent changes. Extractor/reviewer failures and timeouts are
+would be processed and leaves no pipeline artifacts; it may create the persistent `.auto.lock`
+inode, but releases its advisory lock by closing the descriptor. Extractor/reviewer failures and timeouts are
 isolated per session: they are appended to `<ws>/auto.log`, notified, do not stop other sessions,
 and remain retryable because no current complete decision marks them done. The command exits 0
 after such isolated failures and 1 after a global failure.
@@ -388,9 +398,9 @@ revocable. If `auto.changelog_copy` is non-empty, the identical block is appende
 
 When `auto.notify = true`, macOS runs `osascript -e` with title `tutor-memory` and text containing
 the first three diff lines plus `…` when more exist. Quotes and backslashes are escaped. Other
-platforms silently skip notifications. Per-session failure notifications contain the session and
-error. `<ws>/auto-notified.json` maps session ids to their last notified error text: an identical
-failure is not notified again, a changed error is notified, and success removes the entry. Every
+platforms silently skip notifications. Per-session failure notifications contain only the session
+id and exception class. `<ws>/auto-notified.json` maps session ids to their last notified exception
+class: an identical failure is not notified again, a changed class is notified, and success removes the entry. Every
 failure is still appended to `auto.log`. The notifier is injectable for tests.
 
 ### 8.3 Revocation
@@ -409,17 +419,20 @@ decision, replays, renders, syncs unless `--no-sync`, appends a changelog block,
 stdout/stderr at `<ws>/auto.stdout.log` and `<ws>/auto.stderr.log`. Its environment includes
 `USER` and `LOGNAME` from `getpass.getuser()`, `HOME` set to the expanded user home, and PATH
 `~/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin` with `~` expanded. It prints the
-plist path and `launchctl bootstrap gui/<uid> <plist>`. With `--load`, it runs `bootout` (failure
+plist path and `/bin/launchctl bootstrap gui/<uid> <plist>`. With `--load`, it runs `bootout` (failure
 ignored) and then `bootstrap`. `uninstall-agent` runs `bootout` and removes the plist. The command
-runner is injectable for tests.
+runner is injectable for tests. Install commands resolve `agy` and `claude` with `shutil.which`,
+store the absolute results under `[tools]` (or their command names when unresolved), and runners
+use those values. Notifications use `/usr/bin/osascript`.
 
 ### 8.5 Native messaging capture host
 
 The extension first sends each save to the Chrome native messaging host
 `com.tutormem.capture`. Messages use Chrome's framing: a 4-byte little-endian unsigned payload
 length followed by UTF-8 JSON, with an 8 MiB maximum. A save request contains `type = "save"`, a
-hexadecimal `chatId`, a non-empty transcript string, and an object sidecar. The host atomically
-writes `gemini-<chatId>.md` followed by `gemini-<chatId>.json` into the expanded
+1–64 character hexadecimal `chatId`, a non-empty structured transcript string, and a whitelisted,
+typed sidecar whose `chat_id` matches. The host verifies `transcript_sha256` and atomically writes
+`gemini-<chatId>.turns.json` followed by `gemini-<chatId>.json` into the expanded
 `Config.load(ws).auto.inbox`, and replies with `{"ok": true}`. Invalid input and I/O failures reply
 with `{"ok": false, "error": "..."}` and are logged to `<ws>/capture-host.log`; stdout contains
 only framed replies. The host reads until EOF. Its workspace is `$TUTORMEM_WORKSPACE`, otherwise
@@ -433,8 +446,10 @@ the wrapper path and the single allowed origin `chrome-extension://<ID>/`, then 
 `uninstall-capture-host` removes both files. Chrome is the only supported browser.
 
 If native messaging throws or returns anything other than an object whose `ok` property is
-exactly `true`, the extension logs one warning per service-worker lifetime and uses its existing
-two-file `chrome.downloads` path. Per-chat serialization applies to both transports.
+exactly `true`, the extension logs one warning per service-worker lifetime and uses the same JSON
+format through its two-file `chrome.downloads` path. Transcripts above 8 MiB are logged and never
+sent or downloaded. Per-chat serialization applies to both transports. Stored `chat:*` records
+carry `savedAt` and records older than 14 days are pruned on startup.
 
 ### 8.6 Course progress
 
@@ -448,7 +463,7 @@ When progress state exists, base-mode rendering places the progress section betw
 base and `## Learned from sessions`. Without progress state, rendering is byte-for-byte unchanged.
 
 For every new or changed automatic-mode capture, the configured Gemini Flash model receives the
-canonical transcript on stdin and chooses one of the exact known course names or null. It also
+canonical transcript and exact known course-name list on stdin, and chooses one name or null. It also
 returns a concrete summary of what was covered and where the next session should begin, in the
 configured language. The result is stored in `runs/<session_id>/progress.json` with the session id
 and content SHA. A retry caused only by review failure reuses that artifact; a grown session has a
@@ -460,3 +475,8 @@ index is at least the stored index. Unknown courses leave progress unchanged. Pr
 failure is logged and does not block observation extraction, review, replay, or the fallback course.
 Successful updates add `Progress: <course> — <covered> → next: <next>` to the changelog and the
 normal three-line notification budget.
+
+All model-produced text that can enter the brief uses `sanitize_brief_text`: whitespace and
+newlines collapse to one space, leading Markdown markers are removed, backticks and angle brackets
+are removed, and lengths are capped at 200 characters for claims/covered and 160 for next. Rendering
+applies the same sanitizer again as a final boundary.

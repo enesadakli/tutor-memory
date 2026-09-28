@@ -14,10 +14,10 @@ This Chrome extension automatically saves chats from explicitly allowed Gemini G
    tutormem install-capture-host --extension-id <id>
    ```
 
-An empty allowlist captures nothing. The native host writes captures directly to the configured automatic-mode inbox without showing a browser download. If the host is missing or returns an error, the extension falls back to `chrome.downloads` and saves `gemini-<chatId>.md` and `gemini-<chatId>.json` under `~/Downloads/tutor-memory/inbox/`.
+An empty allowlist captures nothing. The native host writes captures directly to the configured automatic-mode inbox without showing a browser download. If the host is missing or returns an error, the extension falls back to `chrome.downloads` and saves `gemini-<chatId>.turns.json` and `gemini-<chatId>.json` under `~/Downloads/tutor-memory/inbox/`. Captures over 8 MiB are logged and not downloaded.
 
 ## Privacy and compatibility
 
-Only chats belonging to allowed Gem ids are captured. The extension makes no network requests: transcript data stays on the machine and is passed only to the local native host (or the local Downloads fallback).
+Only chats belonging to allowed Gem ids are captured. The extension makes no network requests: transcript data stays on the machine and is passed only to the local native host (or the local Downloads fallback). Incremental chat state is retained in Chrome local storage with a `savedAt` timestamp and pruned after 14 days.
 
 Gemini UI changes can break capture. All selectors are defined together in `SELECTORS` at the top of `lib.js`: `turn`, `learner`, `learnerLines`, `tutor`, `mathInline`, `mathBlock`, `mathAttr`, `katex`, `katexDisplay`, and `katexAnnotation`. Update that object if Gemini changes its conversation, learner-text, tutor-content, or math markup.

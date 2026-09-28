@@ -49,7 +49,7 @@ def _parser() -> argparse.ArgumentParser:
     ingest_parser = commands.add_parser("ingest")
     ingest_parser.add_argument("path", type=Path)
     ingest_parser.add_argument("--course", required=True)
-    ingest_parser.add_argument("--speakers", choices=("gemini", "manual"), default="gemini")
+    ingest_parser.add_argument("--speakers", choices=("gemini", "manual", "json"), default="gemini")
     ingest_parser.add_argument("--session-id")
     ingest_parser.add_argument("--date")
     ingest_parser.add_argument("--replace", action="store_true")
@@ -139,7 +139,11 @@ def _extract_one(
 ) -> ExtractResult:
     session = load_session(ws, session_id)
     name = extractor_name or config.extract.extractor
-    base = ws.base_path.read_text(encoding="utf-8") if ws.base_path.exists() else None
+    base = (
+        ws.base_path.read_text(encoding="utf-8")
+        if config.extract.send_base and ws.base_path.exists()
+        else None
+    )
     extractor = make_extractor(  # type: ignore[arg-type]
         name, config, path=from_path, base=base
     )
@@ -167,7 +171,11 @@ def _review_one(ws: Workspace, config: Config, session_id: str, mode: str | None
     write_text(ws.review_path(session_id), packet)
     review_mode = mode or config.review.mode
     if review_mode == "claude":
-        reviewer = ClaudeReviewer(config.review.claude_model, config.review.timeout_s)
+        reviewer = ClaudeReviewer(
+            config.review.claude_model,
+            config.review.timeout_s,
+            executable=config.tools.claude,
+        )
         write_json(ws.proposed_decisions_path(session_id), reviewer.propose(packet, result))
 
 

@@ -230,6 +230,7 @@ stale_after = 8
 [extract]
 extractor = "file"
 timeout_s = 12
+send_base = false
 [review]
 mode = "claude"
 [sync]
@@ -241,6 +242,9 @@ sync = false
 notify = false
 default_course = "Genel"
 changelog_copy = "/tmp/tutormem-changelog.md"
+[tools]
+agy = "/tools/agy"
+claude = "/tools/claude"
 """.strip(),
         encoding="utf-8",
     )
@@ -249,12 +253,15 @@ changelog_copy = "/tmp/tutormem-changelog.md"
     assert config.stale_after == 8
     assert config.extract.extractor == "file"
     assert config.extract.timeout_s == 12
+    assert config.extract.send_base is False
     assert config.review.mode == "claude"
     assert config.sync.doc_title == "Öğrenme özeti"
     assert config.auto.idle_minutes == 7
     assert config.auto.approve == "none"
     assert config.auto.sync is False
     assert config.auto.notify is False
+    assert config.tools.agy == "/tools/agy"
+    assert config.tools.claude == "/tools/claude"
 
 
 def test_config_rejects_unknown_key(tmp_path: Path) -> None:

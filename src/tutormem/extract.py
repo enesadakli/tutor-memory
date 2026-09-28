@@ -21,6 +21,7 @@ from .models import (
     Turn,
     observation_list_schema,
 )
+from .security import sanitize_brief_text
 
 Runner = Callable[[list[str], str, float], subprocess.CompletedProcess[str]]
 _PROMPTS = Path(__file__).resolve().parents[2] / "prompts"
@@ -79,9 +80,10 @@ def _run_agy(
     runner: Runner,
     *,
     operation: str,
+    executable: str = "agy",
 ) -> dict[str, object]:
     args = [
-        "agy",
+        executable,
         "--input-format",
         "stream-json",
         "--output-format",
@@ -201,11 +203,13 @@ class AgyExtractor:
         *,
         runner: Runner | None = None,
         base: str | None = None,
+        executable: str = "agy",
     ) -> None:
         self.model = model
         self.timeout_s = timeout_s
         self._runner = runner or _default_runner
         self.base = base
+        self.executable = executable
 
     def extract(
         self, session: Session, open_items: Sequence[Instruction | Hypothesis]
@@ -231,6 +235,7 @@ class AgyExtractor:
             self.timeout_s,
             self._runner,
             operation="extractor",
+            executable=self.executable,
         )
         return _parse_observations(payload, session, extractor=self.name, model=self.model)
 
@@ -284,11 +289,13 @@ class ProgressExtractor:
         *,
         runner: Runner | None = None,
         language: str = "English",
+        executable: str = "agy",
     ) -> None:
         self.model = model
         self.timeout_s = timeout_s
         self.language = language
         self._runner = runner or _default_runner
+        self.executable = executable
 
     def extract(self, session_turns: Sequence[Turn], course_names: Sequence[str]) -> ProgressResult:
         """Extract progress from transcript turns, constrained to known course names."""
@@ -312,6 +319,7 @@ class ProgressExtractor:
             self.timeout_s,
             self._runner,
             operation="progress extractor",
+            executable=self.executable,
         )
         if set(payload) != {"course", "covered", "next"}:
             raise ExtractorError("progress extractor output has invalid fields")
@@ -325,13 +333,13 @@ class ProgressExtractor:
         normalized_course = course.strip() if isinstance(course, str) else None
         if normalized_course not in course_names:
             normalized_course = None
-        normalized_covered = covered.strip()[:200]
+        normalized_covered = sanitize_brief_text(covered, 200)
         if not normalized_covered:
             raise ExtractorError("progress extractor covered must not be empty")
         return ProgressResult(
             normalized_course,
             normalized_covered,
-            next_value.strip()[:160],
+            sanitize_brief_text(next_value, 160),
         )
 
 
@@ -344,7 +352,12 @@ def make_extractor(
 ) -> Extractor:
     """Create an extractor from CLI and configuration values."""
     if name == "agy":
-        return AgyExtractor(config.extract.model, config.extract.timeout_s, base=base)
+        return AgyExtractor(
+            config.extract.model,
+            config.extract.timeout_s,
+            base=base,
+            executable=config.tools.agy,
+        )
     if name == "file":
         if path is None:
             raise ExtractorError("file extractor requires --from PATH")

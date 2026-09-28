@@ -11,6 +11,8 @@ extractor = "agy"
 model = "gemini-3.8-flash-medium"
 # Maximum extraction runtime in seconds.
 timeout_s = 300
+# Send base.md to the extractor for duplicate suppression.
+send_base = true
 
 [progress]
 # Maintain the per-course section extracted from base.md by `tutormem progress-init`.
@@ -53,3 +55,8 @@ notify = true
 default_course = "General"
 # Optional second changelog path, for example inside a notes vault.
 changelog_copy = ""
+
+[tools]
+# Install commands replace these with absolute paths when the tools are found.
+agy = "agy"
+claude = "claude"

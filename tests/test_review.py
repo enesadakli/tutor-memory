@@ -101,7 +101,9 @@ def test_write_packet_lists_verified_rejected_matches_and_highlights_context() -
     packet = write_packet(session, result, _profile())
 
     assert "s1:1" in packet
-    assert "s1:2" in packet and "not_found" in packet and "missing quote" in packet
+    assert "s1:2" in packet and "not_found" in packet
+    assert "missing quote" not in packet
+    assert "Claim 2" not in packet
     assert "hyp-old:1" in packet and "Likes diagrams." in packet
     assert "a" * 200 + "**alıntı**" + "b" * 200 in packet
     assert "…" in packet

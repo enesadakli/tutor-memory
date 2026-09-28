@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .models import EvidenceRef, ProfileState
+from .security import sanitize_brief_text
 
 
 def _bullets(items: list[str]) -> str:
@@ -16,7 +17,11 @@ def render_brief(
 ) -> str:
     """Render the short tutor-facing study brief."""
     applied = sum(record.status == "applied" for record in state.sessions)
-    instructions = [item.claim for item in state.instructions if item.status == "active"]
+    instructions = [
+        sanitize_brief_text(item.claim, 200)
+        for item in state.instructions
+        if item.status == "active"
+    ]
     promoted = [
         item
         for _, item in sorted(
@@ -32,7 +37,8 @@ def render_brief(
         learned = [
             "## Learned from sessions",
             "### How to teach\n\n" + _bullets(instructions),
-            "### Observed patterns\n\n" + _bullets([item.claim for item in promoted]),
+            "### Observed patterns\n\n"
+            + _bullets([sanitize_brief_text(item.claim, 200) for item in promoted]),
         ]
         sections = [base_md.strip()]
         if progress_md is not None and progress_md.strip():
@@ -48,7 +54,8 @@ def render_brief(
         "# Study brief",
         summary,
         "## How to teach\n\n" + _bullets(instructions),
-        "## Observed patterns\n\n" + _bullets([item.claim for item in promoted]),
+        "## Observed patterns\n\n"
+        + _bullets([sanitize_brief_text(item.claim, 200) for item in promoted]),
     ]
     if courses_md is not None and courses_md.strip():
         sections.append("## Courses and progress\n\n" + courses_md.strip())

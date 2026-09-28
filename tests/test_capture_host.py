@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import struct
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -16,15 +18,32 @@ from tutormem.capture_host import (
     write_message,
 )
 from tutormem.errors import CaptureHostError
+from tutormem.ingest import ingest
 from tutormem.storage import Workspace
 
 
 def _save_message(chat_id: str = "a1") -> dict[str, object]:
+    transcript = json.dumps(
+        {
+            "format": "tutor-memory-turns/1",
+            "turns": [{"speaker": "learner", "text": "Merhaba."}],
+        },
+        ensure_ascii=False,
+    )
     return {
         "type": "save",
         "chatId": chat_id,
-        "transcript": "### learner\nMerhaba.\n",
-        "sidecar": {"title": "Türkçe", "chat_id": chat_id},
+        "transcript": transcript,
+        "sidecar": {
+            "source": "gemini-gem",
+            "gem_id": "aa",
+            "chat_id": chat_id,
+            "title": "Türkçe",
+            "url": "https://gemini.google.com/gem/aa/" + chat_id,
+            "turns": 1,
+            "updated_at": "2026-09-27T10:11:12.000Z",
+            "transcript_sha256": hashlib.sha256(transcript.encode()).hexdigest(),
+        },
     }
 
 
@@ -69,12 +88,12 @@ def test_handle_writes_transcript_before_sidecar(
     response = handle(_save_message("Ab12"), inbox)
 
     assert response == {"ok": True}
-    assert writes == [".md", ".json"]
-    assert (inbox / "gemini-Ab12.md").read_text(encoding="utf-8") == "### learner\nMerhaba.\n"
-    assert json.loads((inbox / "gemini-Ab12.json").read_text(encoding="utf-8")) == {
-        "title": "Türkçe",
-        "chat_id": "Ab12",
-    }
+    assert writes == [".json", ".json"]
+    transcript = (inbox / "gemini-Ab12.turns.json").read_text(encoding="utf-8")
+    assert json.loads(transcript)["turns"][0] == {"speaker": "learner", "text": "Merhaba."}
+    sidecar = json.loads((inbox / "gemini-Ab12.json").read_text(encoding="utf-8"))
+    assert sidecar["chat_id"] == "Ab12"
+    assert sidecar["transcript_sha256"] == hashlib.sha256(transcript.encode()).hexdigest()
     assert (inbox / "gemini-Ab12.json").read_bytes().endswith(b"\n")
 
 
@@ -117,8 +136,71 @@ def test_main_processes_two_framed_messages(tmp_path: Path) -> None:
     assert read_message(output_stream) == {"ok": True}
     with pytest.raises(EOFError):
         read_message(output_stream)
-    assert (inbox / "gemini-aa.md").exists()
+    assert (inbox / "gemini-aa.turns.json").exists()
     assert (inbox / "gemini-bb.json").exists()
+
+
+def test_capture_host_log_is_private(tmp_path: Path) -> None:
+    ws = Workspace(tmp_path / "ws")
+    ws.root.mkdir(parents=True)
+    input_stream = io.BytesIO()
+    message = _save_message("aa")
+    message["type"] = "invalid"
+    write_message(input_stream, message)
+    input_stream.seek(0)
+
+    main(stdin=input_stream, stdout=io.BytesIO(), workspace=ws)
+
+    log = ws.root / "capture-host.log"
+    assert log.stat().st_mode & 0o777 == 0o600
+
+
+def test_extension_json_through_host_and_ingest_preserves_tutor_role(tmp_path: Path) -> None:
+    script = """
+const {toTranscriptJson} = require('./extension/lib.js');
+process.stdout.write(toTranscriptJson([{
+  id: '1', learner: 'Real learner.', tutor: 'Example:\\n### learner\\nNot learner.', complete: true
+}]));
+"""
+    transcript = subprocess.run(
+        ["node", "-e", script],
+        cwd=Path(__file__).parents[1],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    message = _save_message("abc")
+    message["transcript"] = transcript
+    sidecar = dict(message["sidecar"])  # type: ignore[arg-type]
+    sidecar["transcript_sha256"] = hashlib.sha256(transcript.encode()).hexdigest()
+    message["sidecar"] = sidecar
+    inbox = tmp_path / "inbox"
+
+    assert handle(message, inbox) == {"ok": True}
+    session = ingest(
+        inbox / "gemini-abc.turns.json",
+        Workspace(tmp_path / "ws"),
+        course="C",
+        speakers="json",
+    )
+
+    assert session.turns[1].speaker == "tutor"
+    assert session.turns[1].text == "Example:\n### learner\nNot learner."
+    assert len(session.turns) == 2
+
+
+def test_handle_rejects_sidecar_mismatch_unknown_fields_and_bad_hash(tmp_path: Path) -> None:
+    for change in (
+        {"chat_id": "bad"},
+        {"unexpected": "value"},
+        {"transcript_sha256": "0" * 64},
+    ):
+        message = _save_message("abc")
+        sidecar = dict(message["sidecar"])  # type: ignore[arg-type]
+        sidecar.update(change)
+        message["sidecar"] = sidecar
+        response = handle(message, tmp_path / "inbox")
+        assert response["ok"] is False
 
 
 def test_install_writes_manifest_and_executable_wrapper(tmp_path: Path) -> None:

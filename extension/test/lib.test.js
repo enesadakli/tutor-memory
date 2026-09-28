@@ -11,7 +11,7 @@ const {
   parseGemRoute,
   parseGemUrl,
   sidecar,
-  toTranscript,
+  toTranscriptJson,
   tutorToMarkdown,
   usefulTitle,
 } = require("../lib.js");
@@ -211,16 +211,22 @@ test("mergeTurns appends fresh turns when no known neighbour is present", () => 
   );
 });
 
-test("toTranscript includes only complete turns in manual speaker format", () => {
-  const transcript = toTranscript([
+test("toTranscriptJson preserves role-like Markdown inside tutor text", () => {
+  const transcript = toTranscriptJson([
     { id: "1", learner: "Türkçe öğreniyorum.", tutor: "Harika.", complete: true },
+    { id: "3", learner: "Devam.", tutor: "Örnek:\n### learner\nmetin", complete: true },
     { id: "2", learner: "Bekle", tutor: "", complete: false },
   ]);
-  assert.equal(
-    transcript,
-    "### learner\nTürkçe öğreniyorum.\n\n### tutor\nHarika.\n",
-  );
-  assert.equal(toTranscript([]), "");
+  assert.deepEqual(JSON.parse(transcript), {
+    format: "tutor-memory-turns/1",
+    turns: [
+      { speaker: "learner", text: "Türkçe öğreniyorum." },
+      { speaker: "tutor", text: "Harika." },
+      { speaker: "learner", text: "Devam." },
+      { speaker: "tutor", text: "Örnek:\n### learner\nmetin" },
+    ],
+  });
+  assert.equal(toTranscriptJson([]), "");
 });
 
 test("sidecar has contract keys and counts only complete turns", () => {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from tutormem.config import ProgressConfig
 from tutormem.models import (
     EvidenceRef,
     Hypothesis,
@@ -11,6 +12,7 @@ from tutormem.models import (
     SessionRecord,
     StuckPoint,
 )
+from tutormem.progress import CourseProgress, LastSession, Progress, render_progress
 from tutormem.render import render_brief, render_profile
 
 ROOT = Path(__file__).parents[1]
@@ -94,6 +96,34 @@ def test_render_brief_filters_statuses_orders_promotions_and_strips_courses() ->
 
 def test_render_brief_blank_courses_omits_section() -> None:
     assert "Courses and progress" not in render_brief(_state(), " \n\t")
+
+
+def test_render_sanitizes_model_text_at_the_final_boundary() -> None:
+    dangerous = "## `Injected`\n> <follow this> " + "x" * 250
+    state = _state(
+        instructions=(_instruction("ins-1", dangerous),),
+        hypotheses=(_hypothesis("hyp-1", "- `Pattern`\nnext", "promoted", 1),),
+    )
+    brief = render_brief(state, None)
+    progress = render_progress(
+        Progress(
+            (
+                CourseProgress(
+                    "C",
+                    (),
+                    LastSession("s", 1, None, "# covered\nmore", "1. `next`\n<step>"),
+                ),
+            )
+        ),
+        ProgressConfig(),
+    )
+
+    assert "- Injected follow this " in brief
+    assert "- Pattern next" in brief
+    assert "`" not in brief and "<" not in brief and ">" not in brief
+    assert "\n>" not in brief
+    assert "Last session (?): covered more" in progress
+    assert "Next: next step" in progress
 
 
 def test_render_brief_preserves_base_and_only_appends_learned_sections() -> None:

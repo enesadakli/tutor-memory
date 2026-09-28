@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import shlex
 import shutil
@@ -9,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from .config import Config
+from .config import Config, store_resolved_tools
 from .errors import CaptureHostError
 from .storage import Workspace, write_json, write_text
 
@@ -17,6 +19,16 @@ HOST_NAME = "com.tutormem.capture"
 MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 _CHAT_ID = re.compile(r"^[0-9a-f]+$", re.IGNORECASE)
 _EXTENSION_ID = re.compile(r"^[a-p]{32}$")
+_SIDECAR_FIELDS = {
+    "source",
+    "gem_id",
+    "chat_id",
+    "title",
+    "url",
+    "turns",
+    "updated_at",
+    "transcript_sha256",
+}
 
 
 def _read_exact(stream: BinaryIO, size: int) -> bytes:
@@ -66,19 +78,69 @@ def handle(message: dict[str, Any], inbox: Path) -> dict[str, Any]:
         if message.get("type") != "save":
             raise ValueError("message type must be 'save'")
         chat_id = message.get("chatId")
-        if not isinstance(chat_id, str) or _CHAT_ID.fullmatch(chat_id) is None:
-            raise ValueError("chatId must contain only hexadecimal characters")
+        if not isinstance(chat_id, str) or len(chat_id) > 64 or _CHAT_ID.fullmatch(chat_id) is None:
+            raise ValueError("chatId must be 1-64 hexadecimal characters")
         transcript = message.get("transcript")
         if not isinstance(transcript, str) or not transcript:
             raise ValueError("transcript must be a non-empty string")
+        encoded = transcript.encode("utf-8")
+        if len(encoded) > MAX_MESSAGE_BYTES:
+            raise ValueError("transcript exceeds 8 MiB")
+        try:
+            turns_payload = json.loads(transcript)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"transcript must be valid turns JSON: {exc}") from exc
+        if (
+            not isinstance(turns_payload, dict)
+            or turns_payload.get("format") != "tutor-memory-turns/1"
+            or not isinstance(turns_payload.get("turns"), list)
+        ):
+            raise ValueError("transcript must use tutor-memory-turns/1")
         sidecar = message.get("sidecar")
         if not isinstance(sidecar, dict):
             raise ValueError("sidecar must be an object")
+        unknown = set(sidecar) - _SIDECAR_FIELDS
+        if unknown:
+            raise ValueError(f"sidecar has unknown fields: {', '.join(sorted(unknown))}")
+        required_types: dict[str, type[Any]] = {
+            "source": str,
+            "gem_id": str,
+            "chat_id": str,
+            "title": str,
+            "url": str,
+            "turns": int,
+            "updated_at": str,
+            "transcript_sha256": str,
+        }
+        if set(sidecar) != set(required_types):
+            raise ValueError("sidecar is missing required fields")
+        if any(type(sidecar[key]) is not expected for key, expected in required_types.items()):
+            raise ValueError("sidecar field has invalid type")
+        if sidecar["chat_id"] != chat_id:
+            raise ValueError("sidecar chat_id must match chatId")
+        string_limits = {
+            "source": 32,
+            "gem_id": 64,
+            "chat_id": 64,
+            "title": 200,
+            "url": 2048,
+            "updated_at": 64,
+            "transcript_sha256": 64,
+        }
+        if any(len(sidecar[key]) > limit for key, limit in string_limits.items()):
+            raise ValueError("sidecar string field exceeds its maximum length")
+        if sidecar["turns"] < 1 or sidecar["turns"] > 100_000:
+            raise ValueError("sidecar turns must be between 1 and 100000")
+        digest = hashlib.sha256(encoded).hexdigest()
+        if sidecar["transcript_sha256"] != digest:
+            raise ValueError("sidecar transcript_sha256 does not match transcript")
 
-        inbox.mkdir(parents=True, exist_ok=True)
+        inbox.mkdir(parents=True, exist_ok=True, mode=0o700)
         base = inbox / f"gemini-{chat_id}"
-        write_text(base.with_suffix(".md"), transcript)
-        write_json(base.with_suffix(".json"), sidecar)
+        write_text(inbox / f"{base.name}.turns.json", transcript)
+        committed_sidecar = dict(sidecar)
+        committed_sidecar["transcript_sha256"] = digest
+        write_json(base.with_suffix(".json"), committed_sidecar)
         return {"ok": True}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
@@ -86,8 +148,9 @@ def handle(message: dict[str, Any], inbox: Path) -> dict[str, Any]:
 
 def _append_log(path: Path, message: str) -> None:
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as stream:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(descriptor, "a", encoding="utf-8") as stream:
             stream.write(message.rstrip() + "\n")
     except OSError:
         pass
@@ -155,6 +218,8 @@ def install_capture_host(
         raise CaptureHostError("extension id must be 32 characters in the range a-p")
 
     root = ws.root.expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    store_resolved_tools(Workspace(root))
     wrapper = root / "capture-host.sh"
     resolved_executable = executable or shutil.which("tutormem") or sys.argv[0]
     command = str(Path(resolved_executable).expanduser().resolve())

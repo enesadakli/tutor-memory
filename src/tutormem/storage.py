@@ -93,7 +93,7 @@ class Workspace:
 
 def write_text(path: Path, text: str) -> None:
     """Atomically write UTF-8 text, creating parent directories."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(

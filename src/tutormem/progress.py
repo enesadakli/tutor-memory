@@ -5,6 +5,7 @@ from typing import Protocol
 
 from .errors import ParseError
 from .models import Model
+from .security import sanitize_brief_text
 from .storage import Workspace, read_json, write_json
 
 
@@ -113,8 +114,9 @@ def render_progress(progress: Progress, labels: ProgressLabels) -> str:
             date = course.last.date or "?"
             lines.extend(
                 (
-                    f"- {labels.last_label} ({date}): {course.last.covered}",
-                    f"- {labels.next_label}: {course.last.next}",
+                    f"- {labels.last_label} ({date}): "
+                    f"{sanitize_brief_text(course.last.covered, 200)}",
+                    f"- {labels.next_label}: {sanitize_brief_text(course.last.next, 160)}",
                 )
             )
         blocks.append("\n".join(lines))
