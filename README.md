@@ -47,6 +47,11 @@ review is applied automatically, and the resulting brief is replayed, rendered, 
 profile change appears in a macOS notification and in `<workspace>/changelog.md` with an undo
 command.
 
+If `base.md` contains a per-course progress section, run `tutormem progress-init` once. Automatic
+mode then detects the exact course from the transcript, records what was covered and the next
+starting point, and inserts the maintained section back into each rendered brief. A missing or
+unclear course falls back to the capture title and then `auto.default_course`.
+
 The extension hands transcripts to a local native messaging host, installed with `tutormem install-capture-host --extension-id <id>`, so captures do not appear as browser downloads. Chrome downloads remain available only as a fallback when the host is unavailable.
 
 ```bash

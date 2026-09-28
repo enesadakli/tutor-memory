@@ -40,9 +40,16 @@ class Workspace:
     def decisions_path(self, sid: str) -> Path:
         return self.run_dir(sid) / "decisions.json"
 
+    def progress_result_path(self, sid: str) -> Path:
+        return self.run_dir(sid) / "progress.json"
+
     @property
     def profile_path(self) -> Path:
         return self.root / "state" / "profile.json"
+
+    @property
+    def progress_path(self) -> Path:
+        return self.root / "state" / "progress.json"
 
     @property
     def out_dir(self) -> Path:

@@ -17,13 +17,14 @@ from .config import Config
 from .errors import (
     AutomaticModeError,
     DuplicateContentError,
+    ExtractorError,
     ParseError,
     PendingReviewError,
     SchemaError,
     StaleArtifactError,
     TutormemError,
 )
-from .extract import Extractor, make_extractor
+from .extract import Extractor, ProgressExtractor, ProgressResult, ProgressRun, make_extractor
 from .ingest import _parse_manual, ingest
 from .models import (
     DecisionFile,
@@ -33,9 +34,11 @@ from .models import (
     ProfileState,
     Revocation,
     Session,
+    Turn,
     VerifyResult,
     turns_sha256,
 )
+from .progress import apply_session, load_progress, render_progress, write_progress
 from .promote import replay
 from .render import render_brief, render_profile
 from .review import ClaudeReviewer, apply_decisions, write_packet
@@ -62,6 +65,12 @@ class Reviewer(Protocol):
         raise NotImplementedError
 
 
+class CourseProgressExtractor(Protocol):
+    def extract(self, session_turns: Sequence[Turn], course_names: Sequence[str]) -> ProgressResult:
+        """Return the course and continuation point for one session."""
+        raise NotImplementedError
+
+
 @dataclass(frozen=True, slots=True)
 class AutoResult:
     processed: tuple[str, ...]
@@ -78,6 +87,7 @@ class _InboxItem:
     course: str
     date: str
     sha256: str
+    turns: tuple[Turn, ...]
 
 
 def _empty_profile() -> ProfileState:
@@ -112,9 +122,14 @@ def _replayed(ws: Workspace, config: Config) -> ProfileState:
 def _render(ws: Workspace, state: ProfileState, config: Config) -> None:
     courses = ws.courses_path.read_text(encoding="utf-8") if ws.courses_path.exists() else None
     base = ws.base_path.read_text(encoding="utf-8") if ws.base_path.exists() else None
+    progress = load_progress(ws)
+    progress_md = render_progress(progress, config.progress) if progress is not None else None
     write_profile(ws, state)
     write_text(ws.out_dir / "profile.md", render_profile(state, threshold=config.threshold))
-    write_text(ws.out_dir / "brief.md", render_brief(state, courses, base_md=base))
+    write_text(
+        ws.out_dir / "brief.md",
+        render_brief(state, courses, base_md=base, progress_md=progress_md),
+    )
 
 
 def profile_diff(before: ProfileState, after: ProfileState, *, threshold: int = 3) -> list[str]:
@@ -341,6 +356,7 @@ def _inbox_item(path: Path, config: Config) -> _InboxItem:
         ),
         date=_sidecar_date(sidecar.get("updated_at")),
         sha256=turns_sha256(turns),
+        turns=turns,
     )
 
 
@@ -377,6 +393,7 @@ def run_auto(
     no_sync: bool = False,
     dry_run: bool = False,
     extractor: Extractor | None = None,
+    progress_extractor: CourseProgressExtractor | None = None,
     reviewer: Reviewer | None = None,
     notifier: Notifier | None = None,
     syncer: Syncer | None = None,
@@ -410,9 +427,12 @@ def run_auto(
 
         base = ws.base_path.read_text(encoding="utf-8") if ws.base_path.exists() else None
         effective_extractor = extractor
+        effective_progress_extractor = progress_extractor
         effective_reviewer = reviewer or ClaudeReviewer(
             config.review.claude_model, config.review.timeout_s
         )
+        progress_state = load_progress(ws) if config.progress.enabled else None
+        progress_lines: list[str] = []
 
         for path in paths:
             sidecar_path = path.with_suffix(".json")
@@ -468,13 +488,55 @@ def run_auto(
                 processed.append(item.session_id)
                 continue
 
+            progress_result: ProgressResult | None = None
+            if progress_state is not None:
+                if action == "retry":
+                    assert existing is not None
+                    try:
+                        cached_progress = load_artifact(
+                            ws.progress_result_path(existing.session_id), ProgressRun, existing
+                        )
+                    except (SchemaError, StaleArtifactError) as exc:
+                        _log(
+                            ws,
+                            f"{item.session_id}: progress cache ignored: {exc}",
+                            timestamp=current_time,
+                        )
+                    else:
+                        if cached_progress is not None:
+                            progress_result = cached_progress.result()
+                else:
+                    try:
+                        if effective_progress_extractor is None:
+                            assert config.progress.model is not None
+                            effective_progress_extractor = ProgressExtractor(
+                                config.progress.model,
+                                config.extract.timeout_s,
+                                language=config.progress.language,
+                            )
+                        progress_result = effective_progress_extractor.extract(
+                            item.turns,
+                            tuple(course.name for course in progress_state.courses),
+                        )
+                    except ExtractorError as exc:
+                        _log(
+                            ws,
+                            f"{item.session_id}: progress extraction failed: {exc}",
+                            timestamp=current_time,
+                        )
+
             try:
                 if action != "retry":
+                    course = (
+                        progress_result.course
+                        if progress_result is not None and progress_result.course is not None
+                        else item.course
+                    )
                     try:
                         session = ingest(
                             item.transcript,
                             ws,
-                            course=item.course,
+                            course=course,
                             speakers="manual",
                             session_id=item.session_id,
                             date=item.date,
@@ -485,6 +547,15 @@ def run_auto(
                         continue
                     changed = True
                     state = _replayed(ws, config)
+                    if progress_result is not None:
+                        write_json(
+                            ws.progress_result_path(session.session_id),
+                            ProgressRun.from_result(
+                                session.session_id,
+                                session.content_sha256,
+                                progress_result,
+                            ),
+                        )
                 else:
                     assert existing is not None
                     session = existing
@@ -517,6 +588,23 @@ def run_auto(
                     apply_decisions(verified, proposed)
                     write_json(ws.decisions_path(session.session_id), proposed)
                     state = _replayed(ws, config)
+                    if progress_state is not None and progress_result is not None:
+                        updated_progress = apply_session(
+                            progress_state,
+                            session.course,
+                            session.session_id,
+                            session.index,
+                            session.date,
+                            progress_result.covered,
+                            progress_result.next,
+                        )
+                        if updated_progress != progress_state:
+                            progress_state = updated_progress
+                            write_progress(ws, progress_state)
+                            progress_lines.append(
+                                f"Progress: {session.course} — {progress_result.covered} "
+                                f"→ next: {progress_result.next}"
+                            )
                 processed.append(session.session_id)
                 changed = True
                 _clear_failure_notification(ws, session.session_id)
@@ -539,7 +627,7 @@ def run_auto(
             _render(ws, after, config)
             if config.auto.sync and not no_sync:
                 (syncer or sync_brief)(ws, config)
-            lines = profile_diff(before, after, threshold=config.threshold)
+            lines = profile_diff(before, after, threshold=config.threshold) + progress_lines
             write_changelog(
                 ws,
                 config,

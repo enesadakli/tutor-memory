@@ -12,6 +12,19 @@ model = "gemini-3.8-flash-medium"
 # Maximum extraction runtime in seconds.
 timeout_s = 300
 
+[progress]
+# Maintain the per-course section extracted from base.md by `tutormem progress-init`.
+enabled = true
+# This exact level-two heading marks the section to extract from base.md.
+heading = "## Courses and progress"
+# Labels used for the generated lines under each course.
+last_label = "Last session"
+next_label = "Next"
+# Language for the generated covered/next summaries.
+language = "English"
+# Optional; when omitted, the [extract] model is used.
+# model = "gemini-3.8-flash-medium"
+
 [review]
 # Review workflow used when the CLI flag is omitted.
 mode = "packet"

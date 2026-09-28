@@ -12,7 +12,7 @@ from .capture_host import (
 )
 from .capture_host import main as capture_host_main
 from .config import Config
-from .errors import PendingReviewError, ReplayError, StaleArtifactError, TutormemError
+from .errors import ParseError, PendingReviewError, ReplayError, StaleArtifactError, TutormemError
 from .extract import make_extractor
 from .ingest import ingest
 from .models import (
@@ -23,6 +23,7 @@ from .models import (
     ProfileState,
     VerifyResult,
 )
+from .progress import load_progress, render_progress, split_base, write_progress
 from .promote import replay as replay_profile
 from .render import render_brief, render_profile
 from .review import ClaudeReviewer, apply_decisions, write_packet
@@ -71,6 +72,10 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("replay")
     commands.add_parser("render")
     commands.add_parser("status")
+
+    progress_init_parser = commands.add_parser("progress-init")
+    progress_init_parser.add_argument("--force", action="store_true")
+    commands.add_parser("progress-show")
 
     run_parser = commands.add_parser("run")
     run_parser.add_argument("--extractor", choices=("agy", "file"))
@@ -191,8 +196,32 @@ def _render(ws: Workspace, config: Config) -> None:
     state = _load_profile(ws, required=True)
     courses = ws.courses_path.read_text(encoding="utf-8") if ws.courses_path.exists() else None
     base = ws.base_path.read_text(encoding="utf-8") if ws.base_path.exists() else None
+    progress = load_progress(ws)
+    progress_md = render_progress(progress, config.progress) if progress is not None else None
     write_text(ws.out_dir / "profile.md", render_profile(state, threshold=config.threshold))
-    write_text(ws.out_dir / "brief.md", render_brief(state, courses, base_md=base))
+    write_text(
+        ws.out_dir / "brief.md",
+        render_brief(state, courses, base_md=base, progress_md=progress_md),
+    )
+
+
+def _progress_init(ws: Workspace, config: Config, *, force: bool) -> None:
+    if ws.progress_path.exists() and not force:
+        raise ParseError("progress state already exists; use --force to replace it")
+    if not ws.base_path.exists():
+        raise ParseError("base.md is required for progress-init")
+    base = ws.base_path.read_text(encoding="utf-8")
+    base_without_progress, progress = split_base(base, config.progress.heading)
+    write_text(ws.base_path.with_name("base.md.bak"), base)
+    write_progress(ws, progress)
+    write_text(ws.base_path, base_without_progress)
+
+
+def _progress_show(ws: Workspace, config: Config) -> None:
+    progress = load_progress(ws)
+    if progress is None:
+        raise ParseError("progress state not found; run progress-init first")
+    sys.stdout.write(render_progress(progress, config.progress))
 
 
 def _artifact_state(path: Path, cls: type[Any], session: Any) -> tuple[Any | None, bool]:
@@ -325,6 +354,10 @@ def _dispatch(args: argparse.Namespace) -> None:
         _render(ws, config)
     elif args.command == "status":
         _status(ws)
+    elif args.command == "progress-init":
+        _progress_init(ws, config, force=args.force)
+    elif args.command == "progress-show":
+        _progress_show(ws, config)
     elif args.command == "run":
         _run(ws, config, args.extractor, args.observations_dir)
     elif args.command == "sync":

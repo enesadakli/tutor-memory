@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from string import Template
 from typing import Literal, Protocol
@@ -14,8 +15,10 @@ from .models import (
     ExtractResult,
     Hypothesis,
     Instruction,
+    Model,
     Observation,
     Session,
+    Turn,
     observation_list_schema,
 )
 
@@ -66,6 +69,70 @@ def _first_json_object(text: str) -> dict[str, object]:
         if isinstance(value, dict):
             return value
     raise ValueError("no JSON object found")
+
+
+def _run_agy(
+    prompt: str,
+    schema: dict[str, object],
+    model: str,
+    timeout_s: int,
+    runner: Runner,
+    *,
+    operation: str,
+) -> dict[str, object]:
+    args = [
+        "agy",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--model",
+        model,
+        "--sandbox",
+        "--print-timeout",
+        f"{timeout_s}s",
+        "--json-schema",
+        json.dumps(schema),
+        "-p=",
+    ]
+    stdin = json.dumps({"event": "user", "message": {"content": prompt}}) + "\n"
+    try:
+        completed = runner(args, stdin, float(timeout_s))
+    except subprocess.TimeoutExpired as exc:
+        raise ExtractorError(f"agy {operation} timed out after {timeout_s}s") from exc
+    except OSError as exc:
+        raise ExtractorError(f"cannot run agy {operation}: {exc}") from exc
+    if completed.returncode != 0:
+        message = f"agy {operation} exited with status {completed.returncode}"
+        raise ExtractorError(message + _stderr_suffix(completed))
+
+    result_event: dict[str, object] | None = None
+    for line in (completed.stdout or "").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict) and event.get("event") == "result":
+            result_event = event
+    if result_event is None or not isinstance(result_event.get("result"), dict):
+        raise ExtractorError(f"agy {operation} returned no result event{_stderr_suffix(completed)}")
+    result = result_event["result"]
+    assert isinstance(result, dict)
+    if result.get("status") != "SUCCESS":
+        error = result.get("error")
+        message = f"agy {operation} failed: {error}" if error else f"agy {operation} failed"
+        raise ExtractorError(message + _stderr_suffix(completed))
+    response = result.get("response")
+    if not isinstance(response, str):
+        raise ExtractorError(
+            f"agy {operation} result has no response text{_stderr_suffix(completed)}"
+        )
+    try:
+        return _first_json_object(response)
+    except ValueError as exc:
+        raise ExtractorError(
+            f"agy {operation} response contains no JSON object{_stderr_suffix(completed)}"
+        ) from exc
 
 
 def _parse_observations(
@@ -157,60 +224,115 @@ class AgyExtractor:
             open_items=open_items_text,
             base=self.base.strip() if self.base is not None and self.base.strip() else "(none)",
         )
-        args = [
-            "agy",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--model",
+        payload = _run_agy(
+            prompt,
+            observation_list_schema(),
             self.model,
-            "--sandbox",
-            "--print-timeout",
-            f"{self.timeout_s}s",
-            "--json-schema",
-            json.dumps(observation_list_schema()),
-            "-p=",
-        ]
-        stdin = json.dumps({"event": "user", "message": {"content": prompt}}) + "\n"
-        try:
-            completed = self._runner(args, stdin, float(self.timeout_s))
-        except subprocess.TimeoutExpired as exc:
-            raise ExtractorError(f"agy extractor timed out after {self.timeout_s}s") from exc
-        if completed.returncode != 0:
-            message = f"agy extractor exited with status {completed.returncode}"
-            raise ExtractorError(message + _stderr_suffix(completed))
-
-        result_event: dict[str, object] | None = None
-        for line in (completed.stdout or "").splitlines():
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(event, dict) and event.get("event") == "result":
-                result_event = event
-        if result_event is None or not isinstance(result_event.get("result"), dict):
-            raise ExtractorError(
-                f"agy extractor returned no result event{_stderr_suffix(completed)}"
-            )
-        result = result_event["result"]
-        assert isinstance(result, dict)
-        if result.get("status") != "SUCCESS":
-            error = result.get("error")
-            message = f"agy extractor failed: {error}" if error else "agy extractor failed"
-            raise ExtractorError(message + _stderr_suffix(completed))
-        response = result.get("response")
-        if not isinstance(response, str):
-            raise ExtractorError(
-                f"agy extractor result has no response text{_stderr_suffix(completed)}"
-            )
-        try:
-            payload = _first_json_object(response)
-        except ValueError as exc:
-            raise ExtractorError(
-                f"agy extractor response contains no JSON object{_stderr_suffix(completed)}"
-            ) from exc
+            self.timeout_s,
+            self._runner,
+            operation="extractor",
+        )
         return _parse_observations(payload, session, extractor=self.name, model=self.model)
+
+
+@dataclass(frozen=True, slots=True)
+class ProgressResult(Model):
+    course: str | None
+    covered: str
+    next: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProgressRun(Model):
+    session_id: str
+    content_sha256: str
+    course: str | None
+    covered: str
+    next: str
+
+    @classmethod
+    def from_result(
+        cls, session_id: str, content_sha256: str, result: ProgressResult
+    ) -> ProgressRun:
+        return cls(session_id, content_sha256, result.course, result.covered, result.next)
+
+    def result(self) -> ProgressResult:
+        return ProgressResult(self.course, self.covered, self.next)
+
+
+def _progress_schema() -> dict[str, object]:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+            "course": {"type": ["string", "null"]},
+            "covered": {"type": "string", "maxLength": 200},
+            "next": {"type": "string", "maxLength": 160},
+        },
+        "required": ["course", "covered", "next"],
+        "additionalProperties": False,
+    }
+
+
+class ProgressExtractor:
+    """Extract a course and concrete continuation point with Antigravity."""
+
+    def __init__(
+        self,
+        model: str,
+        timeout_s: int,
+        *,
+        runner: Runner | None = None,
+        language: str = "English",
+    ) -> None:
+        self.model = model
+        self.timeout_s = timeout_s
+        self.language = language
+        self._runner = runner or _default_runner
+
+    def extract(self, session_turns: Sequence[Turn], course_names: Sequence[str]) -> ProgressResult:
+        """Extract progress from transcript turns, constrained to known course names."""
+        transcript = "\n\n".join(
+            f"[{turn.speaker} #{index}]\n{turn.text}" for index, turn in enumerate(session_turns)
+        )
+        courses = "\n".join(f"- {name}" for name in course_names) or "(none)"
+        try:
+            prompt_text = (_PROMPTS / "progress.md").read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ExtractorError(f"cannot read progress prompt: {exc}") from exc
+        prompt = Template(prompt_text).substitute(
+            courses=courses,
+            transcript=transcript,
+            language=self.language,
+        )
+        payload = _run_agy(
+            prompt,
+            _progress_schema(),
+            self.model,
+            self.timeout_s,
+            self._runner,
+            operation="progress extractor",
+        )
+        if set(payload) != {"course", "covered", "next"}:
+            raise ExtractorError("progress extractor output has invalid fields")
+        course = payload["course"]
+        covered = payload["covered"]
+        next_value = payload["next"]
+        if course is not None and not isinstance(course, str):
+            raise ExtractorError("progress extractor course must be a string or null")
+        if not isinstance(covered, str) or not isinstance(next_value, str):
+            raise ExtractorError("progress extractor covered and next must be strings")
+        normalized_course = course.strip() if isinstance(course, str) else None
+        if normalized_course not in course_names:
+            normalized_course = None
+        normalized_covered = covered.strip()[:200]
+        if not normalized_covered:
+            raise ExtractorError("progress extractor covered must not be empty")
+        return ProgressResult(
+            normalized_course,
+            normalized_covered,
+            next_value.strip()[:160],
+        )
 
 
 def make_extractor(

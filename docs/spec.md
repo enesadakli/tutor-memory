@@ -41,7 +41,9 @@ A workspace is a directory, by default **outside** the repository:
 <ws>/runs/<session_id>/review.md           review packet for the reviewer
 <ws>/runs/<session_id>/decisions.proposed.json   DecisionFile proposed by a model reviewer
 <ws>/runs/<session_id>/decisions.json            approved DecisionFile (the only one replay reads)
+<ws>/runs/<session_id>/progress.json             SHA-bound automatic progress extraction
 <ws>/state/profile.json               ProfileState (derived, rewritten from scratch by replay)
+<ws>/state/progress.json              maintained per-course continuation state
 <ws>/out/profile.md                   rendered profile
 <ws>/out/brief.md                     rendered brief
 <ws>/changelog.md                     append-only automatic-mode changes and undo commands
@@ -271,6 +273,8 @@ Global: `--workspace PATH`. Subcommands:
 | `replay` | builds and writes `state/profile.json` |
 | `render` | writes `out/profile.md`, `out/brief.md` |
 | `status` | one line per session: index, id, stage (`ingested/extracted/verified/reviewed/applied`), pending/stale flags |
+| `progress-init [--force]` | extracts the configured progress section from `base.md`, preserving `base.md.bak` |
+| `progress-show` | prints the maintained progress section |
 | `run [--extractor agy\|file] [--observations-dir DIR]` | for each session: extract if missing or stale (file extractor reads `DIR/<sid>.json`), verify if missing or stale, write the review packet if `decisions.json` is missing; then replay and render; prints pending sessions |
 | `sync [--dry-run]` | 4.7 |
 | `auto [--inbox DIR] [--idle-minutes N] [--no-sync] [--dry-run]` | section 8 |
@@ -320,6 +324,14 @@ sync = true
 notify = true
 default_course = "General"
 changelog_copy = ""
+
+[progress]
+enabled = true
+heading = "## Courses and progress"
+last_label = "Last session"
+next_label = "Next"
+language = "English"
+# model = "gemini-3.8-flash-medium"  # defaults to extract.model
 ```
 
 `Config.load(ws) -> Config` returns defaults when the file is missing; unknown keys -> `SchemaError`.
@@ -423,3 +435,28 @@ the wrapper path and the single allowed origin `chrome-extension://<ID>/`, then 
 If native messaging throws or returns anything other than an object whose `ok` property is
 exactly `true`, the extension logs one warning per service-worker lifetime and uses its existing
 two-file `chrome.downloads` path. Per-chat serialization applies to both transports.
+
+### 8.6 Course progress
+
+`tutormem progress-init` finds the exact configured level-two heading in `base.md`. It moves that
+section into `state/progress.json`, keeps non-empty preamble lines and each `###` course block's
+non-empty static lines verbatim, writes the remaining base, and first preserves the original as
+`base.md.bak`. Existing progress state is refused unless `--force` is supplied. `progress-show`
+renders the maintained section with the configured heading and labels.
+
+When progress state exists, base-mode rendering places the progress section between the stripped
+base and `## Learned from sessions`. Without progress state, rendering is byte-for-byte unchanged.
+
+For every new or changed automatic-mode capture, the configured Gemini Flash model receives the
+canonical transcript on stdin and chooses one of the exact known course names or null. It also
+returns a concrete summary of what was covered and where the next session should begin, in the
+configured language. The result is stored in `runs/<session_id>/progress.json` with the session id
+and content SHA. A retry caused only by review failure reuses that artifact; a grown session has a
+new SHA and is extracted again.
+
+The extracted course takes precedence over the sidecar title and `auto.default_course` for ingest.
+After the session is approved and replay succeeds, its course entry is updated only when its ingest
+index is at least the stored index. Unknown courses leave progress unchanged. Progress extraction
+failure is logged and does not block observation extraction, review, replay, or the fallback course.
+Successful updates add `Progress: <course> — <covered> → next: <next>` to the changelog and the
+normal three-line notification budget.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import tomllib
+import types
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Self, get_args, get_origin, get_type_hints
 
@@ -48,6 +49,16 @@ class AutoConfig:
     changelog_copy: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class ProgressConfig:
+    enabled: bool = True
+    heading: str = "## Courses and progress"
+    last_label: str = "Last session"
+    next_label: str = "Next"
+    language: str = "English"
+    model: str | None = None
+
+
 def _section(cls: type[Any], raw: Any, name: str) -> Any:
     if not isinstance(raw, dict):
         raise SchemaError(f"config {name}: expected table")
@@ -68,6 +79,10 @@ def _section(cls: type[Any], raw: Any, name: str) -> Any:
             raise SchemaError(f"config {name}.{key}: expected str")
         elif expected is bool and type(value) is not bool:
             raise SchemaError(f"config {name}.{key}: expected bool")
+        elif origin is types.UnionType and type(None) in get_args(expected):
+            non_none = tuple(item for item in get_args(expected) if item is not type(None))
+            if value is not None and not any(type(value) is item for item in non_none):
+                raise SchemaError(f"config {name}.{key}: wrong type")
     try:
         return cls(**raw)
     except (TypeError, ValueError) as exc:
@@ -81,6 +96,15 @@ class Config:
     review: ReviewConfig = field(default_factory=ReviewConfig)
     sync: SyncConfig = field(default_factory=SyncConfig)
     auto: AutoConfig = field(default_factory=AutoConfig)
+    progress: ProgressConfig = field(default_factory=ProgressConfig)
+
+    def __post_init__(self) -> None:
+        if self.progress.model is None:
+            object.__setattr__(
+                self,
+                "progress",
+                dataclasses.replace(self.progress, model=self.extract.model),
+            )
 
     @property
     def threshold(self) -> int:
@@ -101,7 +125,7 @@ class Config:
             raise SchemaError(f"cannot read config: {exc}") from exc
         if not isinstance(raw, dict):
             raise SchemaError("config: expected table")
-        allowed = {"rules", "extract", "review", "sync", "auto"}
+        allowed = {"rules", "extract", "review", "sync", "auto", "progress"}
         unknown = set(raw) - allowed
         if unknown:
             raise SchemaError(f"config: unknown keys: {', '.join(sorted(unknown))}")
@@ -111,4 +135,5 @@ class Config:
             review=_section(ReviewConfig, raw.get("review", {}), "review"),
             sync=_section(SyncConfig, raw.get("sync", {}), "sync"),
             auto=_section(AutoConfig, raw.get("auto", {}), "auto"),
+            progress=_section(ProgressConfig, raw.get("progress", {}), "progress"),
         )

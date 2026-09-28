@@ -7,7 +7,13 @@ def _bullets(items: list[str]) -> str:
     return "\n".join(f"- {item}" for item in items) if items else "- None yet."
 
 
-def render_brief(state: ProfileState, courses_md: str | None, *, base_md: str | None = None) -> str:
+def render_brief(
+    state: ProfileState,
+    courses_md: str | None,
+    *,
+    base_md: str | None = None,
+    progress_md: str | None = None,
+) -> str:
     """Render the short tutor-facing study brief."""
     applied = sum(record.status == "applied" for record in state.sessions)
     instructions = [item.claim for item in state.instructions if item.status == "active"]
@@ -28,7 +34,11 @@ def render_brief(state: ProfileState, courses_md: str | None, *, base_md: str | 
             "### How to teach\n\n" + _bullets(instructions),
             "### Observed patterns\n\n" + _bullets([item.claim for item in promoted]),
         ]
-        return base_md.strip() + "\n\n" + "\n\n".join(learned) + "\n"
+        sections = [base_md.strip()]
+        if progress_md is not None and progress_md.strip():
+            sections.append(progress_md.strip())
+        sections.append("\n\n".join(learned))
+        return "\n\n".join(sections) + "\n"
 
     session_word = "session" if applied == 1 else "sessions"
     summary = (

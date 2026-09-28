@@ -19,6 +19,7 @@ from tutormem.automatic import (
 )
 from tutormem.config import AutoConfig, Config
 from tutormem.errors import AutomaticModeError, ExtractorError, ReviewerError
+from tutormem.extract import ProgressResult
 from tutormem.models import (
     Decision,
     DecisionFile,
@@ -28,6 +29,7 @@ from tutormem.models import (
     Observation,
     ProfileState,
 )
+from tutormem.progress import CourseProgress, Progress, load_progress, write_progress
 from tutormem.storage import Workspace, list_sessions, read_json
 
 NOW = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
@@ -61,6 +63,20 @@ class FakeExtractor:
             (observation,),
             (),
         )
+
+
+class FakeProgressExtractor:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls = 0
+        self.fail = fail
+
+    def extract(self, session_turns, course_names):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        assert session_turns
+        assert tuple(course_names) == ("Databases",)
+        if self.fail:
+            raise ExtractorError("synthetic progress failure")
+        return ProgressResult("Databases", "Relations and keys", "Start joins")
 
 
 class FakeReviewer:
@@ -246,6 +262,58 @@ def test_auto_reuses_extraction_after_reviewer_failure(tmp_path: Path) -> None:
     assert len(extractor.calls) == calls_after_first
     assert second.processed == ("gem-review-retry",)
     assert reviewer.calls == ["gem-review-retry"]
+
+
+def test_auto_uses_cached_extracted_course_and_updates_progress(tmp_path: Path) -> None:
+    ws = Workspace(tmp_path / "ws")
+    inbox = tmp_path / "inbox"
+    _capture(inbox, "progress", title=None)
+    write_progress(ws, Progress((CourseProgress("Databases", ("- Static",), None),)))
+    ws.base_path.write_text("# Tutor brief\n", encoding="utf-8")
+    progress_extractor = FakeProgressExtractor()
+
+    first = _run(
+        ws,
+        inbox,
+        progress_extractor=progress_extractor,
+        reviewer=FailingReviewer("review failed"),
+    )
+    second = _run(
+        ws,
+        inbox,
+        progress_extractor=progress_extractor,
+        reviewer=FakeReviewer(),
+    )
+
+    assert first.failed == ("gem-progress",)
+    assert second.processed == ("gem-progress",)
+    assert progress_extractor.calls == 1
+    assert list_sessions(ws)[0].course == "Databases"
+    progress = load_progress(ws)
+    assert progress is not None
+    assert progress.courses[0].last is not None
+    assert progress.courses[0].last.covered == "Relations and keys"
+    changelog = ws.changelog_path.read_text(encoding="utf-8")
+    assert "Progress: Databases — Relations and keys → next: Start joins" in changelog
+    brief = (ws.out_dir / "brief.md").read_text(encoding="utf-8")
+    assert brief.index("## Courses and progress") < brief.index("## Learned from sessions")
+
+
+def test_auto_progress_failure_logs_and_falls_back_without_blocking(tmp_path: Path) -> None:
+    ws = Workspace(tmp_path / "ws")
+    inbox = tmp_path / "inbox"
+    _capture(inbox, "progress-fail", title=None)
+    original = Progress((CourseProgress("Databases", (), None),))
+    write_progress(ws, original)
+
+    result = _run(ws, inbox, progress_extractor=FakeProgressExtractor(fail=True))
+
+    assert result.processed == ("gem-progress-fail",)
+    assert result.failed == ()
+    assert list_sessions(ws)[0].course == "General"
+    assert load_progress(ws) == original
+    log = ws.auto_log_path.read_text(encoding="utf-8")
+    assert "progress extraction failed: synthetic progress failure" in log
 
 
 def test_auto_failure_notifications_are_deduplicated_and_cleared(tmp_path: Path) -> None:
