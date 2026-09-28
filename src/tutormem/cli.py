@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from .automatic import install_agent, revoke, run_auto, uninstall_agent
+from .capture_host import (
+    install_capture_host,
+    uninstall_capture_host,
+)
+from .capture_host import main as capture_host_main
 from .config import Config
 from .errors import PendingReviewError, ReplayError, StaleArtifactError, TutormemError
 from .extract import make_extractor
@@ -89,6 +94,14 @@ def _parser() -> argparse.ArgumentParser:
     install_parser.add_argument("--interval-minutes", type=int, default=15)
     install_parser.add_argument("--load", action="store_true")
     commands.add_parser("uninstall-agent")
+
+    capture_parser = commands.add_parser("capture-host")
+    capture_parser.add_argument("caller_origin", nargs="*")
+
+    capture_install_parser = commands.add_parser("install-capture-host")
+    capture_install_parser.add_argument("--extension-id", required=True)
+    capture_install_parser.add_argument("--browser", choices=("chrome",), default="chrome")
+    commands.add_parser("uninstall-capture-host")
     return parser
 
 
@@ -331,6 +344,12 @@ def _dispatch(args: argparse.Namespace) -> None:
         install_agent(ws, interval_minutes=args.interval_minutes, load=args.load)
     elif args.command == "uninstall-agent":
         uninstall_agent()
+    elif args.command == "capture-host":
+        capture_host_main(workspace=ws)
+    elif args.command == "install-capture-host":
+        install_capture_host(ws, args.extension_id, browser=args.browser)
+    elif args.command == "uninstall-capture-host":
+        uninstall_capture_host(ws)
 
 
 def main(argv: list[str] | None = None) -> int:

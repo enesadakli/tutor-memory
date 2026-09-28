@@ -277,6 +277,9 @@ Global: `--workspace PATH`. Subcommands:
 | `revoke ID [--reason TEXT] [--no-sync]` | section 8.3 |
 | `install-agent [--interval-minutes 15] [--load]` | section 8.4 |
 | `uninstall-agent` | section 8.4 |
+| `capture-host [CALLER_ORIGIN ...]` | runs the Chrome native messaging host (section 8.5) |
+| `install-capture-host --extension-id ID [--browser chrome]` | installs the host wrapper and Chrome manifest (section 8.5) |
+| `uninstall-capture-host` | removes the host wrapper and Chrome manifest (section 8.5) |
 
 Exit codes: 0 ok, 1 `TutormemError` (message on stderr, no traceback), 2 usage.
 
@@ -392,3 +395,26 @@ stdout/stderr at `<ws>/auto.stdout.log` and `<ws>/auto.stderr.log`. Its environm
 plist path and `launchctl bootstrap gui/<uid> <plist>`. With `--load`, it runs `bootout` (failure
 ignored) and then `bootstrap`. `uninstall-agent` runs `bootout` and removes the plist. The command
 runner is injectable for tests.
+
+### 8.5 Native messaging capture host
+
+The extension first sends each save to the Chrome native messaging host
+`com.tutormem.capture`. Messages use Chrome's framing: a 4-byte little-endian unsigned payload
+length followed by UTF-8 JSON, with an 8 MiB maximum. A save request contains `type = "save"`, a
+hexadecimal `chatId`, a non-empty transcript string, and an object sidecar. The host atomically
+writes `gemini-<chatId>.md` followed by `gemini-<chatId>.json` into the expanded
+`Config.load(ws).auto.inbox`, and replies with `{"ok": true}`. Invalid input and I/O failures reply
+with `{"ok": false, "error": "..."}` and are logged to `<ws>/capture-host.log`; stdout contains
+only framed replies. The host reads until EOF. Its workspace is `$TUTORMEM_WORKSPACE`, otherwise
+the normal default workspace. Chrome's optional caller-origin positional argument is ignored.
+
+`install-capture-host` validates the extension id as exactly 32 lowercase characters from `a` to
+`p`. It writes executable `<ws>/capture-host.sh`, exporting the absolute workspace and executing
+the absolute `tutormem` executable with `capture-host "$@"`. It also writes
+`~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.tutormem.capture.json` with
+the wrapper path and the single allowed origin `chrome-extension://<ID>/`, then prints both paths.
+`uninstall-capture-host` removes both files. Chrome is the only supported browser.
+
+If native messaging throws or returns anything other than an object whose `ok` property is
+exactly `true`, the extension logs one warning per service-worker lifetime and uses its existing
+two-file `chrome.downloads` path. Per-chat serialization applies to both transports.

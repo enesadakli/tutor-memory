@@ -5,6 +5,7 @@
   "description": "Capture allowed Gemini Gem chats for tutor-memory.",
   "permissions": [
     "storage",
+    "nativeMessaging",
     "downloads",
     "downloads.ui"
   ],

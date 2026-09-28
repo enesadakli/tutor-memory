@@ -1,7 +1,11 @@
 "use strict";
 
+importScripts("lib.js");
+
 const queues = new Map();
 let downloadsUiConfigured = false;
+let nativeHostWarningLogged = false;
+const { isHostOk } = globalThis.TutorMemoryCapture;
 
 function utf8DataUrl(mimeType, text) {
   const bytes = new TextEncoder().encode(text);
@@ -42,12 +46,33 @@ async function saveFiles(message) {
   });
 }
 
+async function save(message) {
+  try {
+    const response = await chrome.runtime.sendNativeMessage("com.tutormem.capture", {
+      type: "save",
+      chatId: message.chatId,
+      transcript: message.transcript,
+      sidecar: message.sidecar,
+    });
+    if (isHostOk(response)) {
+      return;
+    }
+  } catch (_error) {
+    // The download fallback below also covers a host that is not installed.
+  }
+  if (!nativeHostWarningLogged) {
+    nativeHostWarningLogged = true;
+    console.warn("tutor-memory native capture host unavailable; using downloads fallback");
+  }
+  await saveFiles(message);
+}
+
 chrome.runtime.onMessage.addListener((message) => {
   if (!message || message.type !== "save" || !/^[0-9a-f]+$/i.test(message.chatId || "")) {
     return;
   }
   const previous = queues.get(message.chatId) || Promise.resolve();
-  const next = previous.catch(() => undefined).then(() => saveFiles(message));
+  const next = previous.catch(() => undefined).then(() => save(message));
   queues.set(message.chatId, next);
   const finish = () => {
     if (queues.get(message.chatId) === next) {

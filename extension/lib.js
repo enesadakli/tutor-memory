@@ -293,6 +293,10 @@
     };
   }
 
+  function isHostOk(response) {
+    return typeof response === "object" && response !== null && response.ok === true;
+  }
+
   const api = {
     SELECTORS,
     parseGemUrl,
@@ -303,6 +307,7 @@
     mergeTurns,
     toTranscript,
     sidecar,
+    isHostOk,
   };
   root.TutorMemoryCapture = api;
   if (typeof module !== "undefined" && module.exports) {

@@ -47,6 +47,8 @@ review is applied automatically, and the resulting brief is replayed, rendered, 
 profile change appears in a macOS notification and in `<workspace>/changelog.md` with an undo
 command.
 
+The extension hands transcripts to a local native messaging host, installed with `tutormem install-capture-host --extension-id <id>`, so captures do not appear as browser downloads. Chrome downloads remain available only as a fallback when the host is unavailable.
+
 ```bash
 # One-time setup; inspect the printed plist and launchctl command.
 tutormem install-agent --interval-minutes 15 --load

@@ -48,3 +48,7 @@ class SyncError(TutormemError):
 
 class AutomaticModeError(TutormemError):
     """Raised when automatic orchestration cannot complete."""
+
+
+class CaptureHostError(TutormemError):
+    """Raised when the native capture host cannot be installed or configured."""

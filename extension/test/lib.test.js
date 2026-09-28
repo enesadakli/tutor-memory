@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 
 const {
   extractTurns,
+  isHostOk,
   mergeTurns,
   parseGemRoute,
   parseGemUrl,
@@ -13,6 +14,14 @@ const {
   tutorToMarkdown,
   usefulTitle,
 } = require("../lib.js");
+
+test("isHostOk accepts only objects whose ok property is true", () => {
+  assert.equal(isHostOk({ ok: true }), true);
+  assert.equal(isHostOk({ ok: false }), false);
+  assert.equal(isHostOk({ ok: 1 }), false);
+  assert.equal(isHostOk(null), false);
+  assert.equal(isHostOk(true), false);
+});
 
 class TextNode {
   constructor(text) {
