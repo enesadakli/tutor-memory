@@ -8,7 +8,7 @@ import pytest
 
 from tutormem import extract, ingest, promote, render, review, sync, verify
 from tutormem.cli import main
-from tutormem.config import AutoConfig, Config
+from tutormem.config import AutoConfig, Config, store_resolved_tools
 from tutormem.errors import SchemaError, StaleArtifactError
 from tutormem.models import (
     SCHEMA_VERSION,
@@ -262,6 +262,28 @@ claude = "/tools/claude"
     assert config.auto.notify is False
     assert config.tools.agy == "/tools/agy"
     assert config.tools.claude == "/tools/claude"
+
+
+def test_store_resolved_tools_preserves_symlink_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "versions" / "2.1.283" / "claude"
+    target.parent.mkdir(parents=True)
+    target.touch()
+    symlink = tmp_path / "bin" / "claude"
+    symlink.parent.mkdir()
+    symlink.symlink_to(target)
+    monkeypatch.setattr(
+        "tutormem.config.shutil.which",
+        lambda name: str(symlink) if name == "claude" else None,
+    )
+
+    store_resolved_tools(Workspace(tmp_path))
+
+    config = Config.load(Workspace(tmp_path))
+    assert config.tools.claude == str(symlink.absolute())
+    assert config.tools.claude != str(target)
+    assert config.tools.agy == "agy"
 
 
 def test_config_rejects_unknown_key(tmp_path: Path) -> None:

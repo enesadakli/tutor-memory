@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import re
 import shutil
 import tomllib
@@ -158,7 +159,7 @@ def store_resolved_tools(ws: Workspace) -> ToolsConfig:
 
     def resolved(name: str) -> str:
         found = shutil.which(name)
-        return str(Path(found).resolve()) if found is not None else name
+        return os.path.abspath(found) if found is not None else name
 
     tools = ToolsConfig(resolved("agy"), resolved("claude"))
     existing = ws.config_path.read_text(encoding="utf-8") if ws.config_path.exists() else ""
