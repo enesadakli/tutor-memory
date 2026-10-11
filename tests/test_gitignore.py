@@ -21,6 +21,9 @@ def test_private_artifacts_and_credentials_are_ignored_but_synthetic_files_are_n
     for path in (
         "gemini-abc.turns.json",
         "workspace/gemini-abc.json",
+        "codex-12345678-1234-1234-1234-123456789abc.turns.json",
+        "workspace/codex-12345678-1234-1234-1234-123456789abc.json",
+        "workspace/rollout-private.jsonl",
         "base.md",
         "auto.stderr.log",
         "examples/token.json",

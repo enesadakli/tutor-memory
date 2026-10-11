@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from tutormem import extract, ingest, promote, render, review, sync, verify
+from tutormem import codex_source, deliver, extract, ingest, promote, render, review, sync, verify
 from tutormem.cli import main
-from tutormem.config import AutoConfig, Config, store_resolved_tools
+from tutormem.config import AutoConfig, CodexConfig, Config, DeliverConfig, store_resolved_tools
 from tutormem.errors import SchemaError, StaleArtifactError
 from tutormem.models import (
     SCHEMA_VERSION,
@@ -218,6 +218,8 @@ def test_config_defaults_without_file(tmp_path: Path) -> None:
     assert config.stale_after == 5
     assert config.extract.model == "gemini-3.8-flash-medium"
     assert config.auto == AutoConfig()
+    assert config.codex == CodexConfig()
+    assert config.deliver == DeliverConfig()
 
 
 def test_config_values_from_file(tmp_path: Path) -> None:
@@ -293,6 +295,45 @@ def test_config_rejects_unknown_key(tmp_path: Path) -> None:
         Config.load(ws)
 
 
+def test_codex_and_delivery_config_values(tmp_path: Path) -> None:
+    ws = Workspace(tmp_path)
+    ws.config_path.write_text(
+        '[codex]\nenabled = true\nsessions_dir = "~/rollouts"\n'
+        'roots = ["~/Dersler"]\nlookback_days = 7\n'
+        '[deliver]\nagents_md = "~/Dersler/AGENTS.md"\nagents_md_header = "Read this brief."\n',
+        encoding="utf-8",
+    )
+    config = Config.load(ws)
+    assert config.codex.enabled is True
+    assert config.codex.sessions_dir == "~/rollouts"
+    assert config.codex.roots == (str(Path("~/Dersler").expanduser().resolve()),)
+    assert config.codex.lookback_days == 7
+    assert config.deliver.agents_md == "~/Dersler/AGENTS.md"
+    assert config.deliver.agents_md_header == "Read this brief."
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '[codex]\nroots = "folder"',
+        "[codex]\nroots = [1]",
+        "[codex]\nenabled = 1",
+        "[codex]\nsessions_dir = 1",
+        "[codex]\nlookback_days = true",
+        "[codex]\nlookback_days = 0",
+        "[codex]\nunknown = 1",
+        "[deliver]\nagents_md = 1",
+        "[deliver]\nagents_md_header = false",
+        "[deliver]\nunknown = 1",
+    ],
+)
+def test_codex_and_delivery_config_validation(tmp_path: Path, text: str) -> None:
+    ws = Workspace(tmp_path)
+    ws.config_path.write_text(text, encoding="utf-8")
+    with pytest.raises(SchemaError):
+        Config.load(ws)
+
+
 @pytest.mark.parametrize(
     "callable_,parameters",
     [
@@ -311,6 +352,8 @@ def test_config_rejects_unknown_key(tmp_path: Path) -> None:
         (render.render_brief, ["state", "courses_md"]),
         (render.render_profile, ["state"]),
         (sync.sync, ["ws", "config", "dry_run", "drive"]),
+        (codex_source.capture_codex, ["config", "inbox", "now_epoch", "idle_minutes"]),
+        (deliver.deliver_agents_md, ["ws", "config"]),
     ],
 )
 def test_public_contract_signatures(callable_: object, parameters: list[str]) -> None:

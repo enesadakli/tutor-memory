@@ -19,7 +19,8 @@ from tutormem.automatic import (
     run_auto,
     uninstall_agent,
 )
-from tutormem.config import AutoConfig, Config
+from tutormem.config import AutoConfig, CodexConfig, Config, DeliverConfig
+from tutormem.deliver import START
 from tutormem.errors import AutomaticModeError, ExtractorError, ReviewerError
 from tutormem.extract import ProgressResult
 from tutormem.models import (
@@ -624,3 +625,223 @@ def test_install_and_uninstall_agent_plist_and_commands(
     uninstall_agent(home=home, uid=501, runner=runner)
     assert not path.exists()
     assert calls[-1][1] == "bootout"
+
+
+def _codex_rollout(tmp_path: Path, *, bad_meta: bool = False) -> tuple[Path, Config, str]:
+    sid = "12345678-1234-1234-1234-123456789abc"
+    root = tmp_path / "Dersler"
+    path = tmp_path / "rollouts" / "rollout-test.jsonl"
+    path.parent.mkdir()
+    records = [
+        {
+            "type": "session_meta",
+            "payload": {
+                "id": "invalid" if bad_meta else sid,
+                "timestamp": "2026-09-27T11:00:00Z",
+                "cwd": str(root / "OOAD" / "notes"),
+            },
+        },
+        {
+            "type": "response_item",
+            "timestamp": "2026-09-27T11:01:00Z",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Teach with examples."}],
+                "internal_chat_message_metadata_passthrough": {"content_item_kinds": ["user.text"]},
+            },
+        },
+        {
+            "type": "response_item",
+            "timestamp": "2026-09-27T11:02:00Z",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "phase": "final_answer",
+                "content": [{"type": "output_text", "text": "Example answer."}],
+            },
+        },
+    ]
+    path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    stamp = NOW.timestamp() - 30 * 60
+    os.utime(path, (stamp, stamp))
+    config = replace(
+        _config(),
+        codex=CodexConfig(enabled=True, sessions_dir=str(path.parent), roots=(str(root),)),
+    )
+    return path, config, sid
+
+
+def test_auto_captures_codex_and_gemini_in_parallel_and_reingests_growth(tmp_path: Path) -> None:
+    ws = Workspace(tmp_path / "ws")
+    inbox = tmp_path / "inbox"
+    path, config, sid = _codex_rollout(tmp_path)
+    _capture_json(inbox, "a1")
+    extractor = FakeExtractor()
+    first = _run(ws, inbox, config=config, extractor=extractor)
+    assert first.processed == (f"codex-{sid}", "gem-a1")
+    sessions = list_sessions(ws)
+    assert sessions[0].session_id == f"codex-{sid}"
+    assert sessions[0].course == "OOAD"
+    assert sessions[0].date == "2026-09-27"
+    assert sessions[0].source == f"codex-{sid}.turns.json"
+    assert sessions[1].session_id == "gem-a1"
+    assert _run(ws, inbox, config=config, extractor=extractor).processed == ()
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-09-27T11:03:00Z",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "One more question."}],
+                        "internal_chat_message_metadata_passthrough": {
+                            "content_item_kinds": ["user.text"]
+                        },
+                    },
+                }
+            )
+            + "\n"
+        )
+    stamp = NOW.timestamp() - 30 * 60
+    os.utime(path, (stamp, stamp))
+    grown = _run(ws, inbox, config=config, extractor=extractor)
+    assert grown.processed == (f"codex-{sid}",)
+    updated = list_sessions(ws)[0]
+    assert updated.index == sessions[0].index
+    assert updated.content_sha256 != sessions[0].content_sha256
+    assert extractor.calls == [f"codex-{sid}", "gem-a1", f"codex-{sid}"]
+
+
+def test_auto_codex_capture_uses_effective_idle_override(tmp_path: Path) -> None:
+    ws = Workspace(tmp_path / "ws")
+    path, config, sid = _codex_rollout(tmp_path)
+    os.utime(path, (NOW.timestamp() - 60, NOW.timestamp() - 60))
+    inbox = tmp_path / "inbox"
+    assert _run(ws, inbox, config=config).processed == ()
+    assert _run(ws, inbox, config=config, idle_minutes=0).processed == (f"codex-{sid}",)
+
+
+def test_auto_codex_dry_run_writes_no_capture(tmp_path: Path) -> None:
+    ws = Workspace(tmp_path / "ws")
+    _, config, _ = _codex_rollout(tmp_path)
+    inbox = tmp_path / "inbox"
+    result = _run(ws, inbox, config=config, dry_run=True)
+    assert result.changed is False
+    assert not inbox.exists()
+    assert not ws.auto_log_path.exists()
+    assert not ws.sessions_dir.exists()
+
+
+def test_auto_invalid_codex_metadata_logs_without_notification(tmp_path: Path) -> None:
+    ws = Workspace(tmp_path / "ws")
+    _, config, _ = _codex_rollout(tmp_path, bad_meta=True)
+    config = replace(config, auto=replace(config.auto, notify=True))
+    messages: list[str] = []
+    result = _run(ws, tmp_path / "inbox", config=config, notifier=messages.append)
+    assert result.failed == ()
+    assert result.processed == ()
+    assert "missing or invalid session_meta" in ws.auto_log_path.read_text(encoding="utf-8")
+    assert messages == []
+
+
+def test_auto_codex_inbox_filename_must_match_chat_id(tmp_path: Path) -> None:
+    ws = Workspace(tmp_path / "ws")
+    _, config, sid = _codex_rollout(tmp_path)
+    inbox = tmp_path / "inbox"
+    _run(ws, inbox, config=config)
+    sidecar = inbox / f"codex-{sid}.json"
+    payload = read_json(sidecar)
+    payload["chat_id"] = "different"
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+    old = NOW.timestamp() - 30 * 60
+    os.utime(sidecar, (old, old))
+    result = _run(ws, inbox)
+    assert result.failed == (f"codex-{sid}",)
+    assert "chat_id does not match filename" in ws.auto_log_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("auto_sync,no_sync", [(False, False), (True, True), (True, False)])
+def test_auto_delivers_before_sync_independently_of_sync_flags(
+    tmp_path: Path, auto_sync: bool, no_sync: bool
+) -> None:
+    ws = Workspace(tmp_path / "ws")
+    inbox = tmp_path / "inbox"
+    _capture(inbox, "delivery")
+    target = tmp_path / "AGENTS.md"
+    config = replace(_config(sync=auto_sync), deliver=DeliverConfig(agents_md=str(target)))
+    synced: list[bool] = []
+
+    def syncer(workspace: Workspace, _: Config) -> str:
+        assert (workspace.out_dir / "brief.md").read_text(encoding="utf-8") in target.read_text(
+            encoding="utf-8"
+        )
+        synced.append(True)
+        return "doc-id"
+
+    result = _run(ws, inbox, config=config, no_sync=no_sync, syncer=syncer)
+    assert result.changed is True
+    assert target.exists()
+    assert synced == ([True] if auto_sync and not no_sync else [])
+
+
+def test_delivery_failure_notifies_once_and_does_not_block_sync(tmp_path: Path) -> None:
+    ws = Workspace(tmp_path / "ws")
+    inbox = tmp_path / "inbox"
+    target = tmp_path / "AGENTS.md"
+    target.write_text(START, encoding="utf-8")
+    config = replace(_config(sync=True, notify=True), deliver=DeliverConfig(agents_md=str(target)))
+    messages: list[str] = []
+    synced: list[bool] = []
+
+    def syncer(_: Workspace, __: Config) -> str:
+        synced.append(True)
+        return "doc-id"
+
+    for chat_id in ("one", "two"):
+        _capture(inbox, chat_id, learner=f"Question {chat_id}.")
+        assert _run(ws, inbox, config=config, notifier=messages.append, syncer=syncer).changed
+    assert synced == [True, True]
+    assert [message for message in messages if "DeliverError" in message] == [
+        "Automatic processing failed: deliver: DeliverError"
+    ]
+    assert ws.auto_log_path.read_text(encoding="utf-8").count("deliver:") == 2
+    assert target.read_text(encoding="utf-8") == START
+    target.write_text("# Rules\n", encoding="utf-8")
+    _capture(inbox, "three", learner="Question three.")
+    _run(ws, inbox, config=config, notifier=messages.append, syncer=syncer)
+    assert "deliver" not in read_json(ws.auto_notified_path)
+
+
+def test_revoke_delivers_after_render_with_no_sync(tmp_path: Path) -> None:
+    ws = Workspace(tmp_path / "ws")
+    inbox = tmp_path / "inbox"
+    target = tmp_path / "AGENTS.md"
+    config = replace(_config(), deliver=DeliverConfig(agents_md=str(target)))
+    _capture(inbox, "undo")
+    _run(ws, inbox, config=config)
+    assert "Teach gem-undo carefully." in target.read_text(encoding="utf-8")
+    revoke(ws, config, "ins-gem-undo:1", no_sync=True, now=NOW)
+    assert "Teach gem-undo carefully." not in target.read_text(encoding="utf-8")
+
+
+def test_revoke_delivery_failure_still_syncs(tmp_path: Path) -> None:
+    ws = Workspace(tmp_path / "ws")
+    inbox = tmp_path / "inbox"
+    _capture(inbox, "undo")
+    _run(ws, inbox)
+    target = tmp_path / "AGENTS.md"
+    target.write_text(START, encoding="utf-8")
+    config = replace(_config(notify=True), deliver=DeliverConfig(agents_md=str(target)))
+    messages: list[str] = []
+    synced: list[bool] = []
+
+    def syncer(_: Workspace, __: Config) -> str:
+        synced.append(True)
+        return "doc-id"
+
+    revoke(ws, config, "ins-gem-undo:1", notifier=messages.append, syncer=syncer, now=NOW)
+    assert synced == [True]
+    assert any("deliver: DeliverError" in message for message in messages)

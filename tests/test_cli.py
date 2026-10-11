@@ -137,3 +137,75 @@ def test_review_packet_writes_review_markdown(tmp_path: Path) -> None:
     packet = workspace / "runs" / "s01" / "review.md"
     assert packet.exists()
     assert "# Review packet: s01" in packet.read_text(encoding="utf-8")
+
+
+def test_deliver_writes_current_brief_without_rendering(tmp_path: Path) -> None:
+    target = tmp_path / "AGENTS.md"
+    (tmp_path / "tutormem.toml").write_text(
+        f'[deliver]\nagents_md = "{target}"\n', encoding="utf-8"
+    )
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "brief.md").write_text("# Existing brief\n", encoding="utf-8")
+    assert main(["--workspace", str(tmp_path), "deliver"]) == 0
+    assert "# Existing brief" in target.read_text(encoding="utf-8")
+    assert not (tmp_path / "state").exists()
+
+
+def test_deliver_reports_malformed_markers(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    target = tmp_path / "AGENTS.md"
+    target.write_text("<!-- tutor-memory:start -->", encoding="utf-8")
+    (tmp_path / "tutormem.toml").write_text(
+        f'[deliver]\nagents_md = "{target}"\n', encoding="utf-8"
+    )
+    (tmp_path / "out").mkdir()
+    (tmp_path / "out" / "brief.md").write_text("Brief", encoding="utf-8")
+    assert main(["--workspace", str(tmp_path), "deliver"]) == 1
+    assert "malformed" in capsys.readouterr().err
+
+
+def test_codex_capture_course_override_backfills_outside_roots(tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    (tmp_path / "tutormem.toml").write_text(f'[auto]\ninbox = "{inbox}"\n', encoding="utf-8")
+    sid = "12345678-1234-1234-1234-123456789abc"
+    path = tmp_path / "rollout-test.jsonl"
+    records = [
+        {
+            "type": "session_meta",
+            "payload": {
+                "id": sid,
+                "timestamp": "2026-10-10T12:00:00Z",
+                "cwd": str(tmp_path / "outside"),
+            },
+        },
+        {
+            "type": "response_item",
+            "timestamp": "2026-10-10T12:01:00Z",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Question"}],
+                "internal_chat_message_metadata_passthrough": {"content_item_kinds": ["user.text"]},
+            },
+        },
+    ]
+    path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    assert main(["--workspace", str(tmp_path), "codex-capture", str(path), "--course", "OOAD"]) == 0
+    assert json.loads((inbox / f"codex-{sid}.json").read_text(encoding="utf-8"))["title"] == "OOAD"
+    assert (inbox / f"codex-{sid}.turns.json").exists()
+    assert not (tmp_path / "sessions").exists()
+
+
+def test_codex_capture_ignores_invalid_metadata_silently(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inbox = tmp_path / "inbox"
+    (tmp_path / "tutormem.toml").write_text(f'[auto]\ninbox = "{inbox}"\n', encoding="utf-8")
+    path = tmp_path / "rollout-test.jsonl"
+    path.write_text("{}\ninvalid\n", encoding="utf-8")
+    assert main(["--workspace", str(tmp_path), "codex-capture", str(path)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""
+    assert not inbox.exists()
