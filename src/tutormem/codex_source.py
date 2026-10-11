@@ -48,6 +48,9 @@ def read_rollout(path: Path) -> CodexRollout | None:
                     continue
                 payload = record["payload"]
                 if record.get("type") == "session_meta":
+                    source = payload.get("source")
+                    if isinstance(source, dict) and "subagent" in source:
+                        return None
                     if metadata is None:
                         session_id = payload["id"]
                         if not isinstance(session_id, str):
