@@ -42,7 +42,7 @@ doc_title = "Study brief"
 config_dir = "~/.config/tutor-memory"
 
 [auto]
-# Directory populated by the capture extension.
+# Directory populated by the capture extension and Codex CLI capture.
 inbox = "~/Downloads/tutor-memory/inbox"
 # A chat is finished when both capture files have been idle this long.
 idle_minutes = 20
@@ -55,6 +55,23 @@ notify = true
 default_course = "General"
 # Optional second changelog path, for example inside a notes vault.
 changelog_copy = ""
+
+[codex]
+# Capture finished Codex CLI sessions into the inbox.
+enabled = false
+# Where Codex CLI writes rollout files.
+sessions_dir = "~/.codex/sessions"
+# Only sessions whose working directory is one of these folders (or inside them) are study
+# sessions. The first path component below the root becomes the course name.
+roots = []
+# Only scan rollouts modified in the last N days.
+lookback_days = 14
+
+[deliver]
+# Write the rendered brief between markers in this file (empty = off).
+agents_md = ""
+# Text placed above the markers when the file is created.
+agents_md_header = "# Study brief\n\nThe section below is maintained by tutor-memory. Read it before tutoring."
 
 [tools]
 # Install commands replace these with absolute paths when the tools are found.

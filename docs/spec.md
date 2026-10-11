@@ -147,7 +147,7 @@ Enums are `Literal` string types, listed with their allowed values:
 Errors live in `src/tutormem/errors.py`, all subclass `TutormemError`:
 `SchemaError`, `ParseError`, `DuplicateContentError`, `SessionExistsError`,
 `SessionNotFoundError`, `StaleArtifactError`, `PendingReviewError`,
-`ReplayError`, `ExtractorError`, `ReviewerError`, `SyncError`.
+`ReplayError`, `ExtractorError`, `ReviewerError`, `SyncError`, `DeliverError`.
 
 ### 4.1 ingest (`ingest.py`)
 `ingest(path: Path, ws: Workspace, *, course: str, speakers: Literal["gemini", "manual", "json"] = "gemini",
@@ -260,6 +260,22 @@ ADC first, else an OAuth client at `<config_dir>/client_secret.json`, scope
 `dry_run` returns the body without any network call. Returns the Doc URL.
 Optional extra `gdrive`.
 
+### 4.8 Local brief delivery (`deliver.py`)
+`deliver_agents_md(ws: Workspace, config: Config) -> bool`
+
+- Empty `deliver.agents_md` or missing `out/brief.md` -> False, no write.
+- Paths support `~`. The managed section uses `<!-- tutor-memory:start -->` and
+  `<!-- tutor-memory:end -->`, each on its own line.
+- Missing target -> create `agents_md_header + "\n\n" + start + "\n" + brief + "\n" + end + "\n"`.
+- Existing target with exactly one well-formed marker pair -> replace only the content between
+  the marker lines. All outside bytes, including marker lines, are preserved.
+- Existing target without markers -> append `"\n\n" + start + "\n" + brief + "\n" + end + "\n"`,
+  preserving the existing text.
+- Missing partner, duplicate markers, inline markers, or end before start -> `DeliverError`,
+  target untouched. I/O failures also raise `DeliverError`.
+- Writes are atomic through storage and preserve the mode of an existing target. Returns True
+  only when the target changes. Delivery renders nothing and calls no network service.
+
 ## 5. CLI (`tutormem`)
 
 Global: `--workspace PATH`. Subcommands:
@@ -278,6 +294,8 @@ Global: `--workspace PATH`. Subcommands:
 | `progress-show` | prints the maintained progress section |
 | `run [--extractor agy\|file] [--observations-dir DIR]` | for each session: extract if missing or stale (file extractor reads `DIR/<sid>.json`), verify if missing or stale, write the review packet if `decisions.json` is missing; then replay and render; prints pending sessions |
 | `sync [--dry-run]` | 4.7 |
+| `deliver` | writes the current `out/brief.md` into the configured `AGENTS.md` (4.8) |
+| `codex-capture PATH [--course NAME]` | captures one rollout immediately into the inbox, ignoring roots and idle time; course overrides the derived title (8.7) |
 | `auto [--inbox DIR] [--idle-minutes N] [--no-sync] [--dry-run]` | section 8 |
 | `revoke ID [--reason TEXT] [--no-sync]` | section 8.3 |
 | `install-agent [--interval-minutes 15] [--load]` | section 8.4 |
@@ -327,6 +345,16 @@ notify = true
 default_course = "General"
 changelog_copy = ""
 
+[codex]
+enabled = false
+sessions_dir = "~/.codex/sessions"
+roots = []
+lookback_days = 14
+
+[deliver]
+agents_md = ""
+agents_md_header = "# Study brief\n\nThe section below is maintained by tutor-memory. Read it before tutoring."
+
 [progress]
 enabled = true
 heading = "## Courses and progress"
@@ -341,6 +369,10 @@ claude = "claude"
 ```
 
 `Config.load(ws) -> Config` returns defaults when the file is missing; unknown keys -> `SchemaError`.
+The new sections validate scalar types and `codex.roots` as an array of strings;
+`codex.lookback_days` must be at least 1. Roots are stored as a tuple of paths resolved with
+`Path.expanduser().resolve()`. Other configured paths expand `~` when used. Codex capture and
+local delivery are disabled by default.
 
 ## 8. Automatic mode
 
@@ -357,9 +389,14 @@ The capture extension writes `gemini-<chatId>.turns.json` in structured
 the whole run. Contention prints `another run in progress` and exits 0. Lock-file age is ignored;
 release is by closing the descriptor, and the file is not deleted.
 
-The command scans `gemini-*.turns.json` files with sidecars. Both mtimes must be at least `idle_minutes`
+Before listing the inbox, enabled Codex capture scans rollouts using the same current time and
+effective idle minutes (section 8.7). Dry runs do not write capture files.
+
+The command scans `gemini-*.turns.json` and `codex-*.turns.json` files with sidecars. Both mtimes must be at least `idle_minutes`
 old (CLI override, else `auto.idle_minutes`); files without a learner turn are skipped. The
-session id is `gem-` plus lowercased `chat_id`, course is the non-blank sidecar title or
+session id is `gem-` plus lowercased `chat_id` for Gemini and `codex-` plus lowercased `chat_id`
+for Codex. Filename and `chat_id` must agree for either prefix, and session ids must match
+`[a-z0-9][a-z0-9-]*`. Course is the non-blank sidecar title or
 `auto.default_course`, and date is the local calendar date of `updated_at`.
 
 An unseen id is ingested with JSON speakers. Legacy `gemini-*.md` files remain readable only when
@@ -377,7 +414,7 @@ and logged as ignored; revocation remains human-only through `tutormem revoke`. 
 claim is sanitized and capped at 200 characters before `decisions.json` is written. With `"none"`, processing stops after
 `decisions.proposed.json`, preserving the human approval gate.
 
-After changes, the command replays and renders once more, syncs unless `--no-sync` or
+After changes, the command replays and renders once more, delivers the brief locally, syncs unless `--no-sync` or
 `auto.sync = false`, appends the changelog, and notifies. `--dry-run` only prints sessions that
 would be processed and leaves no pipeline artifacts; it may create the persistent `.auto.lock`
 inode, but releases its advisory lock by closing the descriptor. Extractor/reviewer failures and timeouts are
@@ -409,7 +446,10 @@ failure is still appended to `auto.log`. The notifier is injectable for tests.
 promoted hypothesis. Unknown, dropped, or already revoked ids fail before any write. It appends a
 `Revocation(target_id=ID, reviewer="human", reason=TEXT)` to the current `decisions.json` of the
 applied session with the greatest ingest index, validates replay in memory, then writes the
-decision, replays, renders, syncs unless `--no-sync`, appends a changelog block, and notifies.
+decision, replays, renders, delivers locally, syncs unless `--no-sync`, appends a changelog block, and notifies.
+Local delivery in both `auto` and `revoke` runs before Google sync, independently of
+`auto.sync` and `--no-sync`. A delivery failure is logged through `_log` and notified once
+through the existing failure notification mechanism under `deliver`; it does not block sync.
 
 ### 8.4 launchd agent
 
@@ -480,3 +520,50 @@ All model-produced text that can enter the brief uses `sanitize_brief_text`: whi
 newlines collapse to one space, leading Markdown markers are removed, backticks and angle brackets
 are removed, and lengths are capped at 200 characters for claims/covered and 160 for next. Rendering
 applies the same sanitizer again as a final boundary.
+
+### 8.7 Codex CLI capture (`codex_source.py`)
+
+`capture_codex(config, inbox: Path, *, now_epoch: float, idle_minutes: int) -> list[str]`
+returns the session ids written or updated. It scans expanded `codex.sessions_dir` recursively
+for `rollout-*.jsonl`, modified within `codex.lookback_days`. A rollout newer than
+`now_epoch - idle_minutes * 60` is still in progress and skipped.
+
+Rollouts are JSONL (verified on codex-cli 0.162.1). `session_meta.payload` supplies `id` (UUID),
+`timestamp` (ISO), and `cwd`. The resolved cwd must be equal to or inside a resolved configured
+root (`Path.is_relative_to`). The first relative path component under the first matching root
+is the course title; cwd equal to the root gives an empty title, falling back to
+`auto.default_course` in the pipeline.
+
+Only `response_item` records with a `message` payload enter the transcript:
+
+- User messages are learner turns only when
+  `internal_chat_message_metadata_passthrough.content_item_kinds == ["user.text"]`.
+  Other kinds, including `agents_md.instructions` and `environments.environment_context`,
+  are injected context and skipped. When kinds are missing, text starting with
+  `# AGENTS.md instructions` or `<` is skipped; other user text is kept.
+- Assistant messages are tutor turns only with `phase = "final_answer"`; a missing phase
+  counts as final. Commentary, developer messages, tools, reasoning, and event records are skipped.
+- Content item text fields join with `"\n"`; consecutive messages of one speaker merge with
+  `"\n\n"`. Turns are stripped and empty turns dropped. Zero learner turns -> silently ignored.
+- Malformed lines are skipped. Missing or invalid metadata -> file ignored; only `auto` logs
+  it through `_log`, without a notification.
+
+The inbox receives `codex-<uuid>.turns.json` in the same `tutor-memory-turns/1` format and
+`codex-<uuid>.json` with this sidecar:
+
+```json
+{"source":"codex-cli","chat_id":"<uuid>","title":"<course>","rollout":"rollout-example.jsonl","turns":2,"updated_at":"<ISO>","transcript_sha256":"<sha256>"}
+```
+
+`rollout` is the filename only, `turns` is the number of merged learner turns, `updated_at`
+is the timestamp of the last kept message, and the SHA covers the UTF-8 transcript text.
+JSON uses indent 2, `ensure_ascii=False`, and a trailing newline. An existing identical sidecar
+SHA means no rewrite. Changed transcripts rewrite both files atomically, mode 0600; a newly
+created inbox has mode 0700. After writing, both files' atime and mtime are set to the rollout's
+mtime so the same automatic run sees them as idle. A resumed rollout changes the SHA and is
+re-ingested under the same session id, keeping its original ingest index.
+
+`codex-capture PATH [--course NAME]` converts one rollout immediately, regardless of capture
+enablement, roots, lookback, or idle time. Without an override, the title derives from a matching
+root or stays empty. Extraction, verification, review, replay, and rendering use their existing
+contracts for both capture sources.

@@ -72,6 +72,40 @@ until it is revoked. Automatic proposals cannot revoke profile items, and all mo
 the brief is flattened, stripped of Markdown control markers, and length-capped. Set
 `auto.approve = "none"` to retain the manual approval step.
 
+## Codex CLI as a tutor
+
+Enable capture and configure study folders in `<workspace>/tutormem.toml`:
+
+```toml
+[codex]
+enabled = true
+roots = ["~/Dersler"]
+
+[deliver]
+agents_md = "~/Dersler/AGENTS.md"
+```
+
+Start Codex inside a configured root, for example `~/Dersler/OOAD/notes`. After the rollout
+has been idle for `auto.idle_minutes`, `tutormem auto` captures it into the same inbox and
+processes it through the existing evidence gates. The first folder below the root supplies
+the course name (`OOAD`); starting at the root uses `auto.default_course`.
+
+After rendering, the brief arrives in the managed section of `AGENTS.md`, which Codex reads
+when started in that folder or a child folder. Existing instructions outside that section
+are preserved. Google Doc sync and Gemini capture can run in parallel.
+
+For a session started outside a study root, back-fill it immediately:
+
+```bash
+tutormem codex-capture ~/.codex/sessions/YYYY/MM/DD/rollout-example.jsonl --course OOAD
+tutormem auto
+```
+
+`tutormem deliver` writes the current `out/brief.md` without rendering. Codex capture is off
+by default; `codex.sessions_dir` defaults to `~/.codex/sessions` and `lookback_days` to 14.
+Captured learner messages and final tutor answers enter the same model extraction and review
+calls as Gemini transcripts; injected context and assistant commentary are skipped.
+
 ## The evidence rule
 
 From `docs/spec.md` section 4.5, precisely:
