@@ -89,6 +89,7 @@ Start Codex inside a configured root, for example `~/Dersler/OOAD/notes`. After 
 has been idle for `auto.idle_minutes`, `tutormem auto` captures it into the same inbox and
 processes it through the existing evidence gates. The first folder below the root supplies
 the course name (`OOAD`); starting at the root uses `auto.default_course`.
+`codex exec` runs and sub-agent rollouts are never captured, including explicit back-fill.
 
 After rendering, the brief arrives in the managed section of `AGENTS.md`, which Codex reads
 when started in that folder or a child folder. Existing instructions outside that section

@@ -51,6 +51,9 @@ def read_rollout(path: Path) -> CodexRollout | None:
                     source = payload.get("source")
                     if isinstance(source, dict) and "subagent" in source:
                         return None
+                    # Only interactive sessions are study sessions.
+                    if source == "exec":
+                        return None
                     if metadata is None:
                         session_id = payload["id"]
                         if not isinstance(session_id, str):

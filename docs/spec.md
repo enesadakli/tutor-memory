@@ -533,6 +533,7 @@ Rollouts are JSONL (verified on codex-cli 0.162.1). `session_meta.payload` suppl
 root (`Path.is_relative_to`). The first relative path component under the first matching root
 is the course title; cwd equal to the root gives an empty title, falling back to
 `auto.default_course` in the pipeline.
+`codex exec` runs and sub-agent rollouts are never captured, including explicit back-fill.
 
 Only `response_item` records with a `message` payload enter the transcript:
 

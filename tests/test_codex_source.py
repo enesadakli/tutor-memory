@@ -163,12 +163,35 @@ def test_subagent_rollout_is_skipped_silently(
     assert captured.out == captured.err == ""
 
 
-@pytest.mark.parametrize("metadata_fields", [{}, {"thread_source": "user"}])
-def test_vscode_rollout_is_captured(tmp_path: Path, metadata_fields: dict[str, Any]) -> None:
+def test_exec_rollout_is_skipped_silently(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     path = _rollout(
         tmp_path / "sessions" / "rollout-test.jsonl",
         tmp_path / "Dersler",
-        source="vscode",
+        [_user("Run the automation lane.")],
+        source="exec",
+        originator="codex_exec",
+    )
+    assert read_rollout(path) is None
+    inbox = tmp_path / "inbox"
+    config = _config(tmp_path)
+    assert _capture(config, inbox) == []
+    assert capture_rollout(path, config, inbox, course="Backfill") is False
+    assert not inbox.exists()
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""
+
+
+@pytest.mark.parametrize("source", ["vscode", "cli"])
+@pytest.mark.parametrize("metadata_fields", [{}, {"thread_source": "user"}])
+def test_interactive_rollout_is_captured(
+    tmp_path: Path, source: str, metadata_fields: dict[str, Any]
+) -> None:
+    path = _rollout(
+        tmp_path / "sessions" / "rollout-test.jsonl",
+        tmp_path / "Dersler",
+        source=source,
         **metadata_fields,
     )
     result = read_rollout(path)
