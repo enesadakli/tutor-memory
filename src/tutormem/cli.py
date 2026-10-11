@@ -11,7 +11,9 @@ from .capture_host import (
     uninstall_capture_host,
 )
 from .capture_host import main as capture_host_main
+from .codex_source import capture_rollout
 from .config import Config
+from .deliver import deliver_agents_md
 from .errors import ParseError, PendingReviewError, ReplayError, StaleArtifactError, TutormemError
 from .extract import make_extractor
 from .ingest import ingest
@@ -72,6 +74,11 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("replay")
     commands.add_parser("render")
     commands.add_parser("status")
+    commands.add_parser("deliver")
+
+    codex_parser = commands.add_parser("codex-capture")
+    codex_parser.add_argument("path", type=Path)
+    codex_parser.add_argument("--course")
 
     progress_init_parser = commands.add_parser("progress-init")
     progress_init_parser.add_argument("--force", action="store_true")
@@ -360,6 +367,10 @@ def _dispatch(args: argparse.Namespace) -> None:
         _replay(ws, config)
     elif args.command == "render":
         _render(ws, config)
+    elif args.command == "deliver":
+        deliver_agents_md(ws, config)
+    elif args.command == "codex-capture":
+        capture_rollout(args.path, config, Path(config.auto.inbox), course=args.course)
     elif args.command == "status":
         _status(ws)
     elif args.command == "progress-init":

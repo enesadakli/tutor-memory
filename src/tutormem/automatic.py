@@ -5,8 +5,10 @@ import fcntl
 import getpass
 import hashlib
 import json
+import logging
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -16,9 +18,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from .codex_source import capture_codex
 from .config import Config, store_resolved_tools
+from .deliver import deliver_agents_md
 from .errors import (
     AutomaticModeError,
+    DeliverError,
     DuplicateContentError,
     ExtractorError,
     ParseError,
@@ -278,6 +283,26 @@ def _clear_failure_notification(ws: Workspace, session_id: str) -> None:
     write_json(ws.auto_notified_path, errors)
 
 
+def _deliver(ws: Workspace, config: Config, notify: Notifier, timestamp: datetime | None) -> None:
+    try:
+        deliver_agents_md(ws, config)
+    except DeliverError as exc:
+        _log(ws, f"deliver: {exc}", timestamp=timestamp)
+        _record_failure_notification(ws, "deliver", exc, enabled=config.auto.notify, notify=notify)
+    else:
+        _clear_failure_notification(ws, "deliver")
+
+
+class _CodexCaptureLog(logging.Handler):
+    def __init__(self, ws: Workspace, timestamp: datetime) -> None:
+        super().__init__()
+        self.ws = ws
+        self.timestamp = timestamp
+
+    def emit(self, record: logging.LogRecord) -> None:
+        _log(self.ws, record.getMessage(), timestamp=self.timestamp)
+
+
 class _AutoLock:
     def __init__(self, path: Path, now_epoch: float) -> None:
         self.path = path
@@ -332,6 +357,8 @@ def _sidecar_path(path: Path) -> Path:
 
 def _path_session_id(path: Path) -> str:
     name = path.name.removesuffix(".turns.json").removesuffix(".md")
+    if name.startswith("codex-"):
+        return name.lower()
     return "gem-" + name.removeprefix("gemini-").lower()
 
 
@@ -348,11 +375,14 @@ def _inbox_item(path: Path, config: Config) -> _InboxItem:
     chat_id = sidecar.get("chat_id")
     if not isinstance(chat_id, str) or not chat_id:
         raise SchemaError(f"sidecar {sidecar_path.name}: invalid chat_id")
-    session_id = "gem-" + chat_id.lower()
+    prefix = "codex" if base_name.startswith("codex-") else "gemini"
+    session_id = ("codex-" if prefix == "codex" else "gem-") + chat_id.lower()
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]*", session_id) is None:
+        raise SchemaError(f"sidecar {sidecar_path.name}: invalid session_id")
     title = sidecar.get("title")
     if title is not None and not isinstance(title, str):
         raise SchemaError(f"sidecar {sidecar_path.name}: invalid title")
-    expected_name = f"gemini-{chat_id}"
+    expected_name = f"{prefix}-{chat_id}"
     if base_name.lower() != expected_name.lower():
         raise SchemaError(f"sidecar {sidecar_path.name}: chat_id does not match filename")
     try:
@@ -448,7 +478,7 @@ def run_auto(
     syncer: Syncer | None = None,
     now: datetime | None = None,
 ) -> AutoResult:
-    """Process finished capture-extension chats without a human approval gate."""
+    """Process finished Gemini and Codex captures without a human approval gate."""
     current_time = now or datetime.now().astimezone()
     now_epoch = current_time.timestamp()
     idle = config.auto.idle_minutes if idle_minutes is None else idle_minutes
@@ -467,12 +497,23 @@ def run_auto(
     try:
         before = _replayed(ws, config) if list_sessions(ws) else _empty_profile()
         state = before
+        if config.codex.enabled and not dry_run:
+            capture_logger = logging.getLogger("tutormem.codex_source")
+            capture_handler = _CodexCaptureLog(ws, current_time)
+            capture_logger.addHandler(capture_handler)
+            try:
+                capture_codex(config, inbox_path, now_epoch=now_epoch, idle_minutes=idle)
+            finally:
+                capture_logger.removeHandler(capture_handler)
+                capture_handler.close()
         if not inbox_path.exists():
             paths: list[Path] = []
         elif not inbox_path.is_dir():
             raise AutomaticModeError(f"inbox is not a directory: {inbox_path}")
         else:
-            json_paths = sorted(inbox_path.glob("gemini-*.turns.json"))
+            json_paths = sorted(
+                [*inbox_path.glob("gemini-*.turns.json"), *inbox_path.glob("codex-*.turns.json")]
+            )
             json_bases = {path.name.removesuffix(".turns.json").lower() for path in json_paths}
             legacy_paths = [
                 path
@@ -706,6 +747,7 @@ def run_auto(
         if changed:
             after = _replayed(ws, config)
             _render(ws, after, config)
+            _deliver(ws, config, notify, current_time)
             if config.auto.sync and not no_sync:
                 (syncer or sync_brief)(ws, config)
             lines = profile_diff(before, after, threshold=config.threshold) + progress_lines
@@ -773,6 +815,7 @@ def revoke(
     after = replay(list_sessions(ws), approvals, config)
     write_json(ws.decisions_path(session.session_id), updated)
     _render(ws, after, config)
+    _deliver(ws, config, notifier or notify_macos, now)
     if not no_sync:
         (syncer or sync_brief)(ws, config)
     lines = profile_diff(before, after, threshold=config.threshold)

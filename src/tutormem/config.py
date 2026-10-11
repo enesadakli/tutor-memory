@@ -56,6 +56,29 @@ class AutoConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class CodexConfig:
+    enabled: bool = False
+    sessions_dir: str = "~/.codex/sessions"
+    roots: tuple[str, ...] = ()
+    lookback_days: int = 14
+
+    def __post_init__(self) -> None:
+        if self.lookback_days < 1:
+            raise SchemaError("config codex.lookback_days: must be at least 1")
+        object.__setattr__(
+            self, "roots", tuple(str(Path(root).expanduser().resolve()) for root in self.roots)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DeliverConfig:
+    agents_md: str = ""
+    agents_md_header: str = (
+        "# Study brief\n\nThe section below is maintained by tutor-memory. Read it before tutoring."
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class ProgressConfig:
     enabled: bool = True
     heading: str = "## Courses and progress"
@@ -91,6 +114,10 @@ def _section(cls: type[Any], raw: Any, name: str) -> Any:
             raise SchemaError(f"config {name}.{key}: expected str")
         elif expected is bool and type(value) is not bool:
             raise SchemaError(f"config {name}.{key}: expected bool")
+        elif origin is tuple:
+            if not isinstance(value, list) or any(type(item) is not str for item in value):
+                raise SchemaError(f"config {name}.{key}: expected array of strings")
+            raw = {**raw, key: tuple(value)}
         elif origin is types.UnionType and type(None) in get_args(expected):
             non_none = tuple(item for item in get_args(expected) if item is not type(None))
             if value is not None and not any(type(value) is item for item in non_none):
@@ -110,6 +137,8 @@ class Config:
     auto: AutoConfig = field(default_factory=AutoConfig)
     progress: ProgressConfig = field(default_factory=ProgressConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
+    codex: CodexConfig = field(default_factory=CodexConfig)
+    deliver: DeliverConfig = field(default_factory=DeliverConfig)
 
     def __post_init__(self) -> None:
         if self.progress.model is None:
@@ -138,7 +167,7 @@ class Config:
             raise SchemaError(f"cannot read config: {exc}") from exc
         if not isinstance(raw, dict):
             raise SchemaError("config: expected table")
-        allowed = {"rules", "extract", "review", "sync", "auto", "progress", "tools"}
+        allowed = {item.name for item in dataclasses.fields(cls)}
         unknown = set(raw) - allowed
         if unknown:
             raise SchemaError(f"config: unknown keys: {', '.join(sorted(unknown))}")
@@ -150,6 +179,8 @@ class Config:
             auto=_section(AutoConfig, raw.get("auto", {}), "auto"),
             progress=_section(ProgressConfig, raw.get("progress", {}), "progress"),
             tools=_section(ToolsConfig, raw.get("tools", {}), "tools"),
+            codex=_section(CodexConfig, raw.get("codex", {}), "codex"),
+            deliver=_section(DeliverConfig, raw.get("deliver", {}), "deliver"),
         )
 
 

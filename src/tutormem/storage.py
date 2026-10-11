@@ -91,7 +91,7 @@ class Workspace:
         return cls(Path(value).expanduser())
 
 
-def write_text(path: Path, text: str) -> None:
+def write_text(path: Path, text: str, *, mode: int | None = None) -> None:
     """Atomically write UTF-8 text, creating parent directories."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary: Path | None = None
@@ -103,6 +103,8 @@ def write_text(path: Path, text: str) -> None:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
+        if mode is not None:
+            temporary.chmod(mode)
         os.replace(temporary, path)
     finally:
         if temporary is not None and temporary.exists():

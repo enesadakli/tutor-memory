@@ -16,6 +16,8 @@ base.md.bak
 courses.md
 gemini-*.md
 gemini-*.json
+codex-*.json
+rollout-*.jsonl
 *.turns.json
 capture-host.log
 auto*.log

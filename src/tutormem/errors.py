@@ -46,6 +46,10 @@ class SyncError(TutormemError):
     """Raised when document synchronization fails."""
 
 
+class DeliverError(TutormemError):
+    """Raised when local brief delivery cannot safely update its target."""
+
+
 class AutomaticModeError(TutormemError):
     """Raised when automatic orchestration cannot complete."""
 
